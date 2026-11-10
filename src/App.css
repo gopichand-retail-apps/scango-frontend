@@ -1,0 +1,101 @@
+.scango-shell {
+  --page: #f3f5ef;
+  --surface: #ffffff;
+  --surface-soft: #f8faf6;
+  --ink: #1d2c26;
+  --muted: #748179;
+  --line: #e0e7e0;
+  --line-strong: #cad7cc;
+  --forest: #205340;
+  --forest-deep: #173a32;
+  --forest-soft: #e5efe7;
+  --coral: #c7684d;
+  --gold: #bd9852;
+  --blue: #63839a;
+  --negative: #af4e42;
+  --positive: #34785a;
+  min-height: 100vh;
+  color: var(--ink);
+  background: var(--page);
+  font-family: "Roboto Variable", "Roboto", sans-serif;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.scango-shell[data-theme="dark"] {
+  --page: #151d1a;
+  --surface: #1d2924;
+  --surface-soft: #22312b;
+  --ink: #e8eee8;
+  --muted: #a4b0a7;
+  --line: #35433a;
+  --line-strong: #4c5f52;
+  --forest: #8dbb9e;
+  --forest-deep: #173a32;
+  --forest-soft: #293d32;
+  --coral: #e28b70;
+  --gold: #d0ad66;
+  --blue: #8baec1;
+  --negative: #e18777;
+  --positive: #8bc6a0;
+}
+
+.scango-shell button,
+.scango-shell input,
+.scango-shell select {
+  font: inherit;
+}
+
+.scango-shell button {
+  color: inherit;
+}
+
+.scango-shell h1,
+.scango-shell h2,
+.scango-shell h3,
+.scango-shell p,
+.scango-shell figure {
+  margin-top: 0;
+}
+
+.section-kicker {
+  display: block;
+  color: var(--coral);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.section-heading h2 {
+  margin: 4px 0 0;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+}
+
+.section-heading > svg {
+  color: var(--forest);
+}
+
+.loading-spinner {
+  width: 23px;
+  height: 23px;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--coral);
+  border-radius: 50%;
+  animation: kiosk-spin 800ms linear infinite;
+}
+
+@keyframes kiosk-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
