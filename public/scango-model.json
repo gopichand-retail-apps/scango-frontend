@@ -134,6 +134,9 @@
     "staffConflict": "Another attendant already handled this checkout. The list is up to date.",
     "attendantCalledTitle": "An attendant is on the way",
     "attendantCalledDescription": "The scale reading did not match. Please wait; a team member will check the item with you.",
+    "awaitingConfirmationTitle": "Waiting for confirmation",
+    "awaitingConfirmationDescription": "We did not hear back from the checkout service, so this step is not confirmed yet. Checking again will never add it twice.",
+    "retryConfirmation": "Check again",
     "categories": {
       "produce": "Produce",
       "bakery": "Bakery",

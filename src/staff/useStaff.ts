@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { ApiError } from "../lib/api";
+import { ApiError, isRetryableFailure } from "../lib/api";
 import { setStaffToken } from "../lib/credentials";
 import { copy } from "../lib/format";
+import { createIntentKeys } from "../lib/intent-keys";
 import { listExceptions, resolveException, signInStaff, signOutStaff } from "../lib/staff-api";
 import type { PublicModel, StaffAction, StaffException, StaffIdentity, StaffReasonCode } from "../lib/types";
 
@@ -29,6 +30,7 @@ function ignoreSignOutFailure() {}
 
 export function useStaff(model: PublicModel) {
   const [state, setState] = useState<StaffState>(signedOut);
+  const [keys] = useState(() => createIntentKeys());
 
   const failureText = useCallback(
     (error: unknown) => (error instanceof ApiError ? error.message : copy(model, "errorGeneric")),
@@ -67,14 +69,18 @@ export function useStaff(model: PublicModel) {
 
   async function resolve(exception: StaffException, action: StaffAction, reasonCode: StaffReasonCode) {
     setState((current) => ({ ...current, busy: true, message: null }));
+    const intent = `resolve:${exception.sessionId}`;
+    const key = keys.keyFor(intent, { action, reasonCode, version: exception.version });
     try {
-      await resolveException(model, exception, { action, reasonCode }, crypto.randomUUID());
+      await resolveException(model, exception, { action, reasonCode }, key);
+      keys.confirm(intent);
       setState((current) => ({
         ...current,
         busy: false,
         message: { tone: "success", text: copy(model, "staffResolved") },
       }));
     } catch (error) {
+      if (!isRetryableFailure(error)) keys.confirm(intent);
       if (isStaffSessionEnded(error)) {
         endStaffSession(error);
         return;
@@ -87,6 +93,7 @@ export function useStaff(model: PublicModel) {
   async function signOut() {
     setState((current) => ({ ...current, busy: true }));
     await signOutStaff(model).catch(ignoreSignOutFailure);
+    keys.clear();
     setState(signedOut);
   }
 

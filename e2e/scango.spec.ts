@@ -242,12 +242,13 @@ test("expired checkout sessions clear stale basket state and require a fresh che
 test("uses generic model copy for unknown API error codes", async ({ page }) => {
   await startCheckout(page);
   const rawMessage = "Internal database connection string";
+  // A definite refusal (4xx) with an unrecognised code; 5xx outcomes are unknown and show the awaiting panel instead.
   await page.route(/\/api\/v1\/sessions\/[0-9a-f-]+\/scan$/, async (route) => {
     await route.fulfill({
-      status: 500,
+      status: 422,
       contentType: "application/json",
       body: JSON.stringify({
-        error: { code: "INTERNAL_ERROR", message: rawMessage, requestId: "test-request" },
+        error: { code: "UNRECOGNISED_RULE", message: rawMessage, requestId: "test-request" },
       }),
     });
   });
@@ -289,12 +290,11 @@ test("recovers after a scan API interruption without losing the basket", async (
   await page.route(scanRoute, (route) => route.abort());
   await page.getByRole("textbox", { name: "Barcode or item code" }).fill("QS-MLK-044");
   await page.getByRole("button", { name: "Add item" }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByText("Waiting for confirmation")).toBeVisible();
   await page.unroute(scanRoute);
-  await page.getByRole("button", { name: "Try again" }).click();
-  await page.getByRole("textbox", { name: "Barcode or item code" }).fill("QS-MLK-044");
-  await page.getByRole("button", { name: "Add item" }).click();
+  await page.getByRole("button", { name: "Check again" }).click();
   await expect(page.locator(".basket-line").filter({ hasText: "Cream-top milk" })).toBeVisible();
+  await expect(page.locator(".basket-line")).toHaveCount(1);
 });
 
 test("theme preference persists and mobile layout stays inside the viewport", async ({ page }) => {

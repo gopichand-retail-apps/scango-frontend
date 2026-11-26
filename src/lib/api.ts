@@ -73,6 +73,11 @@ function credentialHeaders(auth: RequestAuth): Record<string, string> {
   return { "X-Kiosk-Id": kioskId, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
 
+// A failure whose outcome is unknown: the write may have committed, so keep its intent key and retry it.
+export function isRetryableFailure(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 0 || error.status >= 500 || error.code === "INVALID_RESPONSE");
+}
+
 function getErrorCopy(model: PublicModel, code: string): string {
   return copy(model, errorCopyByCode[code] ?? "errorGeneric");
 }

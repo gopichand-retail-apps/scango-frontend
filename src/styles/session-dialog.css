@@ -79,8 +79,50 @@
   font-size: 14px;
 }
 
+.awaiting-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  left: 16px;
+  z-index: 35;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 640px;
+  margin: 0 auto;
+  gap: 12px;
+  padding: 14px 16px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--gold);
+  border-radius: 4px;
+  box-shadow: 0 8px 28px rgba(18, 33, 25, 0.16);
+}
+
+.awaiting-panel > div {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.awaiting-panel p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.awaiting-panel .button {
+  min-height: 48px;
+  font-size: 14px;
+}
+
 @media (max-width: 420px) {
   .idle-actions {
     grid-template-columns: 1fr;
+  }
+
+  .awaiting-panel .button {
+    width: 100%;
   }
 }

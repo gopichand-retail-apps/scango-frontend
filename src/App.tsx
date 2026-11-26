@@ -4,6 +4,7 @@ import "./styles/kiosk-layout.css";
 import "./styles/kiosk-controls.css";
 import "./styles/session-dialog.css";
 import { KioskHeader } from "./components/KioskHeader";
+import { AwaitingConfirmation } from "./components/AwaitingConfirmation";
 import { IdleWarning } from "./components/IdleWarning";
 import { KioskWorkspace } from "./components/KioskWorkspace";
 import { ReceiptPanel } from "./components/ReceiptPanel";
@@ -39,6 +40,8 @@ export default function App() {
   }
 
   const theme = kiosk.theme ?? model.data.app.defaultTheme;
+  // While a step is unconfirmed, every other write waits behind the awaiting-confirmation retry.
+  const locked = kiosk.busy || kiosk.awaiting !== null;
   const content = !kiosk.catalog ? (
     <main className="service-error" role="alert">
       <AlertCircle size={22} aria-hidden="true" />
@@ -48,17 +51,12 @@ export default function App() {
       </button>
     </main>
   ) : !kiosk.session ? (
-    <WelcomeScreen
-      model={model}
-      products={kiosk.catalog.products}
-      busy={kiosk.busy}
-      onStart={() => void kiosk.start()}
-    />
+    <WelcomeScreen model={model} products={kiosk.catalog.products} busy={locked} onStart={() => void kiosk.start()} />
   ) : kiosk.session.state === "receipt_issued" && kiosk.receipt ? (
     <ReceiptPanel
       model={model}
       receipt={kiosk.receipt}
-      busy={kiosk.busy}
+      busy={locked}
       onPrint={() => window.print()}
       onReset={kiosk.reset}
     />
@@ -67,7 +65,7 @@ export default function App() {
       model={model}
       catalog={kiosk.catalog}
       session={kiosk.session}
-      busy={kiosk.busy}
+      busy={locked}
       onScan={kiosk.scan}
       onQuantity={kiosk.quantity}
       onCoupon={kiosk.coupon}
@@ -87,6 +85,7 @@ export default function App() {
         onToggleTheme={() => kiosk.setTheme(theme === "light" ? "dark" : "light")}
       />
       {content}
+      {kiosk.awaiting ? <AwaitingConfirmation model={model} busy={kiosk.busy} onRetry={kiosk.awaiting.retry} /> : null}
       {kiosk.idle.phase === "warning" ? (
         <IdleWarning
           model={model}

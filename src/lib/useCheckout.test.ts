@@ -139,6 +139,100 @@ describe("checkout hook", () => {
     expect(result.current.busy).toBe(false);
   });
 
+  it("a lost reply keeps the intent key, waits for confirmation, and a retry reuses the same key", async () => {
+    let next = 0;
+    vi.mocked(crypto.randomUUID).mockImplementation(() => `a-b-c-d-${++next}`);
+    const { result } = await loadHook();
+    await act(async () => result.current.start());
+    apiMocks.scanItem.mockRejectedValueOnce(
+      new ApiError(copy(model, "serviceUnavailable"), 0, "SERVICE_UNAVAILABLE", null),
+    );
+
+    await act(async () => result.current.scan("QS-MLK-044", "barcode"));
+    expect(result.current.awaiting?.kind).toBe("scan");
+    expect(result.current.error).toBeNull();
+    const firstKey = apiMocks.scanItem.mock.calls[0][4];
+
+    await act(async () => result.current.awaiting?.retry());
+    expect(apiMocks.scanItem.mock.calls[1][4]).toBe(firstKey);
+    expect(result.current.awaiting).toBeNull();
+    expect(result.current.session).toEqual(milkSession);
+  });
+
+  it("a server error also keeps the key; a definite refusal discards it", async () => {
+    let next = 0;
+    vi.mocked(crypto.randomUUID).mockImplementation(() => `a-b-c-d-${++next}`);
+    const { result } = await loadHook();
+    await act(async () => result.current.start());
+
+    apiMocks.scanItem.mockRejectedValueOnce(new ApiError(copy(model, "errorGeneric"), 503, "INTERNAL_ERROR", null));
+    await act(async () => result.current.scan("QS-MLK-044", "barcode"));
+    await act(async () => result.current.awaiting?.retry());
+    expect(apiMocks.scanItem.mock.calls[1][4]).toBe(apiMocks.scanItem.mock.calls[0][4]);
+
+    apiMocks.scanItem.mockRejectedValueOnce(new ApiError(copy(model, "invalidBarcode"), 404, "ITEM_NOT_FOUND", null));
+    await act(async () => result.current.scan("UNKNOWN", "barcode"));
+    expect(result.current.awaiting).toBeNull();
+    expect(result.current.error).toBe(copy(model, "invalidBarcode"));
+    await act(async () => result.current.scan("UNKNOWN", "barcode"));
+    expect(apiMocks.scanItem.mock.calls[3][4]).not.toBe(apiMocks.scanItem.mock.calls[2][4]);
+  });
+
+  it("a deliberate second scan of the same item after success is a new intent", async () => {
+    let next = 0;
+    vi.mocked(crypto.randomUUID).mockImplementation(() => `a-b-c-d-${++next}`);
+    const { result } = await loadHook();
+    await act(async () => result.current.start());
+
+    await act(async () => result.current.scan("QS-MLK-044", "barcode"));
+    await act(async () => result.current.scan("QS-MLK-044", "barcode"));
+    expect(apiMocks.scanItem.mock.calls[1][4]).not.toBe(apiMocks.scanItem.mock.calls[0][4]);
+  });
+
+  it("a failed refresh reports the error and never offers to replay a read", async () => {
+    const { result } = await loadHook();
+    await act(async () => result.current.start());
+    apiMocks.getSession.mockRejectedValueOnce(
+      new ApiError(copy(model, "serviceUnavailable"), 0, "SERVICE_UNAVAILABLE", null),
+    );
+
+    await act(async () => result.current.retry());
+    expect(result.current.awaiting).toBeNull();
+    expect(result.current.error).toBe(copy(model, "serviceUnavailable"));
+    expect(result.current.session).toEqual(milkSession);
+  });
+
+  it("pressing Start twice quickly starts one checkout", async () => {
+    let finishStart: (session: CheckoutSession) => void = () => undefined;
+    apiMocks.startSession.mockReturnValueOnce(new Promise((resolve) => (finishStart = resolve)));
+    const { result } = await loadHook();
+
+    await act(async () => {
+      void result.current.start();
+      void result.current.start();
+      finishStart(milkSession);
+    });
+    expect(apiMocks.startSession).toHaveBeenCalledTimes(1);
+    expect(result.current.session).toEqual(milkSession);
+  });
+
+  it("a lost tender reply never shows a paid state until the server confirms it", async () => {
+    apiMocks.startSession.mockResolvedValueOnce(readySession);
+    const { result } = await loadHook();
+    await act(async () => result.current.start());
+    apiMocks.simulateTender.mockRejectedValueOnce(
+      new ApiError(copy(model, "serviceUnavailable"), 0, "SERVICE_UNAVAILABLE", null),
+    );
+
+    await act(async () => result.current.tender("simulated_card", "approve"));
+    expect(result.current.awaiting?.kind).toBe("tender");
+    expect(result.current.session?.state).toBe("ready_to_pay");
+    expect(result.current.receipt).toBeNull();
+
+    await act(async () => result.current.awaiting?.retry());
+    expect(result.current.session).toEqual(paidSession);
+  });
+
   it("tracks the server's idle window and extends it on request", async () => {
     const extended: CheckoutSession = { ...milkSession, version: 3, expiresInSeconds: 180 };
     apiMocks.extendSession.mockResolvedValueOnce(extended);

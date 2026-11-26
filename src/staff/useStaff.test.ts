@@ -95,6 +95,21 @@ describe("staff console state", () => {
     expect(result.current.exceptions).toEqual([]);
   });
 
+  it("keeps the decision key across a lost reply so pressing again cannot decide twice", async () => {
+    let next = 0;
+    vi.mocked(crypto.randomUUID).mockImplementation(() => `a-b-c-d-${++next}`);
+    const { result } = await signedIn();
+    api.resolveException.mockRejectedValueOnce(
+      new ApiError(copy(model, "serviceUnavailable"), 0, "SERVICE_UNAVAILABLE", null),
+    );
+
+    await act(async () => result.current.resolve(exception, "approve_weight", "weight_verified"));
+    await act(async () => result.current.resolve(exception, "approve_weight", "weight_verified"));
+    expect(api.resolveException.mock.calls[1][3]).toBe(api.resolveException.mock.calls[0][3]);
+    await act(async () => result.current.resolve(exception, "approve_weight", "weight_verified"));
+    expect(api.resolveException.mock.calls[2][3]).not.toBe(api.resolveException.mock.calls[1][3]);
+  });
+
   it("explains a conflict from another attendant and refreshes the list", async () => {
     const { result } = await signedIn();
     api.resolveException.mockRejectedValueOnce(

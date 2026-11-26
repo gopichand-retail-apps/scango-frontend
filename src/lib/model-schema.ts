@@ -173,6 +173,9 @@ const requiredTextMessages = [
   "staffConflict",
   "attendantCalledTitle",
   "attendantCalledDescription",
+  "awaitingConfirmationTitle",
+  "awaitingConfirmationDescription",
+  "retryConfirmation",
 ];
 
 const requiredMessageGroups = {

@@ -30,6 +30,7 @@ function createKiosk(overrides: Partial<CheckoutView> = {}): CheckoutView {
     reset: vi.fn().mockResolvedValue(undefined),
     extend: vi.fn().mockResolvedValue(undefined),
     idle: { phase: "inactive", secondsLeft: null },
+    awaiting: null,
     retry: vi.fn().mockResolvedValue(undefined),
     setTheme: vi.fn(),
     dismissError: vi.fn(),
@@ -116,6 +117,18 @@ describe("ScanGo app shell", () => {
     fireEvent.click(screen.getByRole("button", { name: copy(model, "sessionEndNow") }));
     expect(kiosk.extend).toHaveBeenCalledOnce();
     expect(kiosk.reset).toHaveBeenCalledOnce();
+  });
+
+  it("shows the awaiting-confirmation panel and locks other writes until the step is confirmed", () => {
+    const retry = vi.fn().mockResolvedValue(undefined);
+    const kiosk = createKiosk({ session: emptySession, awaiting: { kind: "scan", retry } });
+    mockUseCheckout.mockReturnValue(kiosk);
+    render(<App />);
+
+    expect(screen.getByText(copy(model, "awaitingConfirmationTitle"))).toBeVisible();
+    expect(screen.getByRole("button", { name: copy(model, "scanItem") })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: copy(model, "retryConfirmation") }));
+    expect(retry).toHaveBeenCalledOnce();
   });
 
   it("keeps the idle warning hidden while the session is active", () => {
