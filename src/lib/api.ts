@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { resolveApiBaseUrl } from "../config";
+import { kioskId, resolveApiBaseUrl } from "../config";
+import { getSessionToken, setSessionToken } from "./credentials";
 import { copy } from "./format";
 import {
   catalogSchema,
@@ -7,6 +8,7 @@ import {
   publicModelSchema,
   receiptSchema,
   resetResultSchema,
+  startedSessionSchema,
   tenderResultSchema,
 } from "./schemas";
 import type {
@@ -34,7 +36,7 @@ export class ApiError extends Error {
   }
 }
 
-type RequestOptions = {
+export type RequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
   signal?: AbortSignal;
@@ -48,7 +50,15 @@ const errorCopyByCode: Readonly<Record<string, string>> = {
   WEIGHT_CHECK_REQUIRED: "weightMismatch",
   SESSION_NOT_FOUND: "sessionExpired",
   RECEIPT_NOT_FOUND: "sessionExpired",
+  SESSION_EXPIRED: "sessionTimedOut",
+  KIOSK_NOT_REGISTERED: "kioskNotRecognised",
+  IDEMPOTENCY_KEY_REUSED: "idempotencyConflict",
 };
+
+function credentialHeaders(): Record<string, string> {
+  const token = getSessionToken();
+  return { "X-Kiosk-Id": kioskId, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
 
 function getErrorCopy(model: PublicModel, code: string): string {
   return copy(model, errorCopyByCode[code] ?? "errorGeneric");
@@ -61,6 +71,8 @@ async function sendRequest(model: PublicModel, path: string, options: RequestOpt
       method: options.method ?? "GET",
       signal: options.signal,
       headers: {
+        "X-Request-ID": crypto.randomUUID(),
+        ...credentialHeaders(),
         ...(options.body ? { "Content-Type": "application/json" } : {}),
         ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
       },
@@ -72,7 +84,7 @@ async function sendRequest(model: PublicModel, path: string, options: RequestOpt
   }
 }
 
-async function requestData<T>(
+export async function requestData<T>(
   model: PublicModel,
   path: string,
   schema: z.ZodType<T>,
@@ -123,8 +135,19 @@ export function getCatalog(model: PublicModel, signal?: AbortSignal): Promise<Ca
   return requestData(model, "/catalog", catalogSchema, { signal });
 }
 
-export function startSession(model: PublicModel, idempotencyKey: string): Promise<CheckoutSession> {
-  return requestData(model, "/sessions", checkoutSessionSchema, {
+// The access token is kept in module memory and stripped from the returned session.
+export async function startSession(model: PublicModel, idempotencyKey: string): Promise<CheckoutSession> {
+  const { accessToken, ...session } = await requestData(model, "/sessions", startedSessionSchema, {
+    method: "POST",
+    body: {},
+    idempotencyKey,
+  });
+  setSessionToken(accessToken);
+  return session;
+}
+
+export function extendSession(model: PublicModel, sessionId: string, idempotencyKey: string) {
+  return requestData(model, `/sessions/${sessionId}/extend`, checkoutSessionSchema, {
     method: "POST",
     body: {},
     idempotencyKey,

@@ -254,13 +254,17 @@ test("uses generic model copy for unknown API error codes", async ({ page }) => 
 
 test("batch scan replay does not duplicate items", async ({ page }) => {
   const start = await page.request.post(`${apiBaseUrl}/sessions`, {
-    headers: { "Idempotency-Key": "playwright-start-session" },
+    headers: { "Idempotency-Key": "playwright-start-session", "X-Kiosk-Id": "kiosk-01" },
     data: {},
   });
   const startPayload = await start.json();
   const sessionId = String(startPayload.data.id);
   const request = {
-    headers: { "Idempotency-Key": "playwright-scan-batch" },
+    headers: {
+      "Idempotency-Key": "playwright-scan-batch",
+      "X-Kiosk-Id": "kiosk-01",
+      Authorization: `Bearer ${String(startPayload.data.accessToken)}`,
+    },
     data: { barcodes: ["QS-MLK-044", "QS-EGG-056"] },
   };
   const first = await page.request.post(`${apiBaseUrl}/sessions/${sessionId}/scan-batch`, request);

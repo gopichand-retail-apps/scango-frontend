@@ -160,10 +160,19 @@ const requiredTextMessages = [
   "stateReceiptIssued",
   "stateReset",
   "stateCancelled",
+  "stateExpired",
   "roleShopper",
   "roleAttendant",
   "roleAdministrator",
   "issueReceipt",
+  "sessionIdleTitle",
+  "sessionIdleDescription",
+  "sessionExtend",
+  "sessionEndNow",
+  "sessionSecondsLeft",
+  "sessionTimedOut",
+  "kioskNotRecognised",
+  "idempotencyConflict",
 ];
 
 const requiredMessageGroups = {
@@ -233,10 +242,15 @@ const appContentSchema = z
     taxRateBasisPoints: z.number().int().nonnegative().max(10000),
     scaleMinimumGrams: z.number().int().positive(),
     scaleMaximumGrams: z.number().int().positive(),
+    sessionIdleSeconds: z.number().int().positive(),
+    sessionWarningSeconds: z.number().int().positive(),
   })
   .strict()
   .refine((app) => app.scaleMinimumGrams <= app.scaleMaximumGrams, {
     message: "The scale minimum must not exceed the scale maximum.",
+  })
+  .refine((app) => app.sessionWarningSeconds < app.sessionIdleSeconds, {
+    message: "The idle warning must start before the session expires.",
   });
 
 export const publicModelSchema = z
@@ -304,12 +318,16 @@ export const checkoutSessionSchema = z.object({
     "paid",
     "receipt_issued",
     "reset",
+    "expired",
   ]),
   couponCode: z.string().nullable(),
   paymentStatus: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
   resetAt: z.string().nullable(),
+  version: z.number().int().nonnegative(),
+  expiresAt: z.string().nullable(),
+  expiresInSeconds: z.number().int().nonnegative().nullable(),
   items: z.array(sessionItemSchema),
   pendingWeight: sessionItemSchema.nullable(),
   latestTender: tenderSchema.nullable(),
@@ -317,6 +335,10 @@ export const checkoutSessionSchema = z.object({
   discountCents: z.number().int().nonnegative(),
   taxCents: z.number().int().nonnegative(),
   totalCents: z.number().int().nonnegative(),
+});
+
+export const startedSessionSchema = checkoutSessionSchema.extend({
+  accessToken: z.string().min(20),
 });
 
 export const tenderResultSchema = z.object({

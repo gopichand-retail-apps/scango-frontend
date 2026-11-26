@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./api";
 import * as api from "./api";
 import { useCheckout } from "./useCheckout";
+import { clearCredentials, getSessionToken, setSessionToken } from "./credentials";
 import { copy } from "./format";
 import type { CheckoutSession } from "./types";
 import { catalog, milkSession, model, paidSession, receipt, readySession } from "../test/fixtures";
@@ -14,6 +15,7 @@ vi.mock("./api", async (importOriginal) => {
     adjustQuantity: vi.fn(),
     applyCoupon: vi.fn(),
     checkWeight: vi.fn(),
+    extendSession: vi.fn(),
     getCatalog: vi.fn(),
     getSession: vi.fn(),
     issueReceipt: vi.fn(),
@@ -67,6 +69,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  clearCredentials();
 });
 
 describe("checkout hook", () => {
@@ -136,6 +139,56 @@ describe("checkout hook", () => {
     expect(result.current.error).toBe(copy(model, "errorGeneric"));
     expect(result.current.error).not.toContain("internal exception detail");
     expect(result.current.busy).toBe(false);
+  });
+
+  it("tracks the server's idle window and extends it on request", async () => {
+    const extended: CheckoutSession = { ...milkSession, version: 3, expiresInSeconds: 180 };
+    apiMocks.extendSession.mockResolvedValueOnce(extended);
+    const { result } = await loadHook();
+    expect(result.current.idle.phase).toBe("inactive");
+
+    await act(async () => result.current.start());
+    expect(result.current.idle.phase).toBe("active");
+    await act(async () => result.current.extend());
+
+    expect(apiMocks.extendSession).toHaveBeenCalledWith(model, milkSession.id, "checkout-key");
+    expect(result.current.session).toEqual(extended);
+  });
+
+  it("expiry clears the session, receipt and credentials and explains why", async () => {
+    apiMocks.startSession.mockResolvedValueOnce({ ...milkSession, expiresInSeconds: 0 });
+    const { result } = await loadHook();
+    setSessionToken("shopper-token");
+
+    await act(async () => result.current.start());
+    await waitFor(() => expect(result.current.session).toBeNull());
+    expect(result.current.receipt).toBeNull();
+    expect(result.current.error).toBe(copy(model, "sessionTimedOut"));
+    expect(result.current.idle.phase).toBe("inactive");
+    expect(getSessionToken()).toBeNull();
+  });
+
+  it("a 410 on a write returns to the welcome screen with the timed-out message", async () => {
+    const { result } = await loadHook();
+    await act(async () => result.current.start());
+    setSessionToken("shopper-token");
+    apiMocks.scanItem.mockRejectedValueOnce(
+      new ApiError(copy(model, "sessionTimedOut"), 410, "SESSION_EXPIRED", "request-id"),
+    );
+
+    await act(async () => result.current.scan("QS-MLK-044", "barcode"));
+    expect(result.current.session).toBeNull();
+    expect(result.current.error).toBe(copy(model, "sessionTimedOut"));
+    expect(getSessionToken()).toBeNull();
+  });
+
+  it("reset forgets the shopper token", async () => {
+    const { result } = await loadHook();
+    await act(async () => result.current.start());
+    setSessionToken("shopper-token");
+
+    await act(async () => result.current.reset());
+    expect(getSessionToken()).toBeNull();
   });
 
   it("retries failed boot and reports non-Error initialization failures", async () => {

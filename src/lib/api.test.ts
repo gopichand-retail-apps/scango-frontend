@@ -4,6 +4,7 @@ import {
   adjustQuantity,
   applyCoupon,
   checkWeight,
+  extendSession,
   getCatalog,
   getProductById,
   getReceipt,
@@ -18,10 +19,12 @@ import {
   simulateTender,
   startSession,
 } from "./api";
+import { clearCredentials, getSessionToken } from "./credentials";
 import { copy } from "./format";
 import { catalog, emptySession, model, paidSession, receipt } from "../test/fixtures";
 
 const sessionId = emptySession.id;
+const syntheticToken = "t".repeat(43);
 const fetchMock = vi.fn<typeof fetch>();
 
 function jsonResponse(payload: unknown, status = 200, headers: HeadersInit = {}): Response {
@@ -50,6 +53,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  clearCredentials();
 });
 
 describe("API client", () => {
@@ -91,7 +95,7 @@ describe("API client", () => {
         path: "/sessions",
         body: {},
         key: "start-key",
-        data: emptySession,
+        data: { ...emptySession, accessToken: syntheticToken },
       },
       { run: () => getSession(model, sessionId), path: `/sessions/${sessionId}`, data: emptySession },
       {
@@ -223,6 +227,59 @@ describe("API client", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(getCatalog(model, controller.signal)).rejects.toBe(abortError);
+  });
+
+  it("sends the kiosk id, keeps the start token in memory only and attaches it to session calls", async () => {
+    queueResponse({ ...emptySession, accessToken: syntheticToken }, 201);
+    const session = await startSession(model, "start-key");
+    const startHeaders = new Headers(lastRequest().options.headers);
+
+    expect(session).not.toHaveProperty("accessToken");
+    expect(startHeaders.get("X-Kiosk-Id")).toBe("kiosk-01");
+    expect(startHeaders.has("Authorization")).toBe(false);
+    expect(getSessionToken()).toBe(syntheticToken);
+
+    queueResponse(emptySession);
+    await getSession(model, sessionId);
+    const readHeaders = new Headers(lastRequest().options.headers);
+    expect(readHeaders.get("Authorization")).toBe(`Bearer ${syntheticToken}`);
+    expect(readHeaders.get("X-Kiosk-Id")).toBe("kiosk-01");
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+  });
+
+  it("gives every HTTP attempt its own request id", async () => {
+    queueResponse(catalog);
+    queueResponse(catalog);
+    await getCatalog(model);
+    const first = new Headers(lastRequest().options.headers).get("X-Request-ID");
+    await getCatalog(model);
+    const second = new Headers(lastRequest().options.headers).get("X-Request-ID");
+
+    expect(first).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second).not.toBe(first);
+  });
+
+  it("extends the session with an idempotency key", async () => {
+    queueResponse({ ...emptySession, expiresInSeconds: 180 });
+
+    await expect(extendSession(model, sessionId, "extend-key")).resolves.toMatchObject({ expiresInSeconds: 180 });
+    const request = lastRequest();
+    expect(request.url).toBe(`http://127.0.0.1:5999/api/v1/sessions/${sessionId}/extend`);
+    expect(new Headers(request.options.headers).get("Idempotency-Key")).toBe("extend-key");
+  });
+
+  it("maps expiry, unknown kiosk and key conflicts to model copy", async () => {
+    const cases = [
+      ["SESSION_EXPIRED", 410, "sessionTimedOut"],
+      ["KIOSK_NOT_REGISTERED", 403, "kioskNotRecognised"],
+      ["IDEMPOTENCY_KEY_REUSED", 409, "idempotencyConflict"],
+    ] as const;
+    for (const [code, status, key] of cases) {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code, message: "server detail" } }, status));
+      await expect(getSession(model, sessionId)).rejects.toMatchObject({ code, status, message: copy(model, key) });
+    }
   });
 
   it("finds catalog products by stable ID", () => {

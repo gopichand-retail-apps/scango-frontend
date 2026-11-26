@@ -2,7 +2,9 @@ import { AlertCircle, X } from "lucide-react";
 import "./App.css";
 import "./styles/kiosk-layout.css";
 import "./styles/kiosk-controls.css";
+import "./styles/session-dialog.css";
 import { KioskHeader } from "./components/KioskHeader";
+import { IdleWarning } from "./components/IdleWarning";
 import { KioskWorkspace } from "./components/KioskWorkspace";
 import { ReceiptPanel } from "./components/ReceiptPanel";
 import { WelcomeScreen } from "./components/WelcomeScreen";
@@ -86,6 +88,15 @@ export default function App() {
         onToggleTheme={() => kiosk.setTheme(theme === "light" ? "dark" : "light")}
       />
       {content}
+      {kiosk.idle.phase === "warning" ? (
+        <IdleWarning
+          model={model}
+          secondsLeft={kiosk.idle.secondsLeft}
+          busy={kiosk.busy}
+          onExtend={kiosk.extend}
+          onEnd={kiosk.reset}
+        />
+      ) : null}
       {kiosk.error ? (
         <div className="kiosk-alert" role="alert">
           <AlertCircle size={17} aria-hidden="true" />

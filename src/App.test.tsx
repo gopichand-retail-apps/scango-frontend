@@ -29,6 +29,8 @@ function createKiosk(overrides: Partial<CheckoutView> = {}): CheckoutView {
     tender: vi.fn().mockResolvedValue(undefined),
     issueReceipt: vi.fn().mockResolvedValue(undefined),
     reset: vi.fn().mockResolvedValue(undefined),
+    extend: vi.fn().mockResolvedValue(undefined),
+    idle: { phase: "inactive", secondsLeft: null },
     retry: vi.fn().mockResolvedValue(undefined),
     setTheme: vi.fn(),
     dismissError: vi.fn(),
@@ -103,5 +105,24 @@ describe("ScanGo app shell", () => {
     expect(screen.getByText(receipt.receiptNumber)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: copy(model, "printReceipt") }));
     expect(print).toHaveBeenCalledOnce();
+  });
+
+  it("shows the idle warning over the workspace and routes its two actions", () => {
+    const kiosk = createKiosk({ session: emptySession, idle: { phase: "warning", secondsLeft: 12 } });
+    mockUseCheckout.mockReturnValue(kiosk);
+    render(<App />);
+
+    expect(screen.getByRole("alertdialog", { name: copy(model, "sessionIdleTitle") })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: copy(model, "sessionExtend") }));
+    fireEvent.click(screen.getByRole("button", { name: copy(model, "sessionEndNow") }));
+    expect(kiosk.extend).toHaveBeenCalledOnce();
+    expect(kiosk.reset).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the idle warning hidden while the session is active", () => {
+    mockUseCheckout.mockReturnValue(createKiosk({ session: emptySession, idle: { phase: "active", secondsLeft: 90 } }));
+    render(<App />);
+
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });

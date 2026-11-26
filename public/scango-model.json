@@ -98,10 +98,19 @@
     "stateReceiptIssued": "Receipt ready",
     "stateReset": "Checkout reset",
     "stateCancelled": "Checkout cancelled",
+    "stateExpired": "Checkout timed out",
     "roleShopper": "Shopper",
     "roleAttendant": "Attendant action",
     "roleAdministrator": "Administrator",
     "issueReceipt": "View receipt",
+    "sessionIdleTitle": "Still checking out?",
+    "sessionIdleDescription": "For your privacy, this checkout will clear soon unless you continue.",
+    "sessionExtend": "Keep my checkout",
+    "sessionEndNow": "Start over",
+    "sessionSecondsLeft": "Seconds left",
+    "sessionTimedOut": "Your checkout timed out and was cleared for privacy. Start a new checkout when you are ready.",
+    "kioskNotRecognised": "This kiosk is not set up for checkout. Please ask a team member for help.",
+    "idempotencyConflict": "That action changed before it was confirmed. Check your basket and try again.",
     "categories": {
       "produce": "Produce",
       "bakery": "Bakery",
@@ -141,7 +150,9 @@
       "maximumBodyBytes": 16384,
       "taxRateBasisPoints": 825,
       "scaleMinimumGrams": 1,
-      "scaleMaximumGrams": 30000
+      "scaleMaximumGrams": 30000,
+      "sessionIdleSeconds": 180,
+      "sessionWarningSeconds": 30
     },
     "categories": [
       {

@@ -60,6 +60,8 @@ SCANGO_E2E_BUILD_DIR=/tmp/scango-e2e-mock \
 VITE_IS_MOCK=true npm run test:e2e
 ```
 
+`VITE_SCANGO_KIOSK_ID` (build time, default `kiosk-01`) names the kiosk; it must be registered in the backend's synthetic fixture. It is a public label, not a secret.
+
 Run the same command with `VITE_IS_MOCK=false` and a distinct
 `SCANGO_E2E_BUILD_DIR` for live-selection mode. Both runs deliberately make the
 unselected endpoint unreachable; live-selection only verifies routing to the
@@ -67,7 +69,7 @@ isolated test API.
 
 ## Limits
 
-The tender screen is a local simulation. It has no card fields or live payment credentials. Shopper identity, session ownership, attendant/admin authorization, and idle timeout are absent; the interface is not suitable for deployment beyond loopback. Architecture is not exposed in the product UI or public static assets. The canonical architecture and threat boundary are in the [architecture document](docs/architecture.md) and [security notes](docs/architecture.md#8-security-privacy-and-egress).
+The tender screen is a local simulation. It has no card fields or live payment credentials. Each checkout belongs to the kiosk that started it: the API returns a bearer token once, the client keeps it in module memory only (never in browser storage, URLs or the page) and sends it with `X-Kiosk-Id`. A reload therefore starts a fresh checkout. After 150 idle seconds an alert dialog offers more time; at 180 seconds the visible checkout clears and the server keeps the audited outcome. There is no shopper identity or hardware attestation, and attendant/admin authorization is not implemented yet; the interface is not suitable for deployment beyond loopback. Architecture is not exposed in the product UI or public static assets. The canonical architecture and threat boundary are in the [architecture document](docs/architecture.md) and [security notes](docs/architecture.md#8-security-privacy-and-egress).
 
 ## Vercel frontend configuration
 
@@ -79,4 +81,4 @@ Production Vite assets do not contain the development proxy; requests use the co
 
 The configuration adds noindex, frame/content-type/referrer/permission protections and no-store for the active UI model. Headers and noindex do not provide access control. Keep preview deployment protection enabled and use synthetic data. Hosted routing, cookies, headers, and user workflows have **not** been verified; no deployment is performed.
 
-Known release gaps: Shopper session ownership and staff authorization are absent. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.
+Known release gaps: Shopper sessions are bound to this kiosk by an in-memory bearer token with an idle warning and expiry (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.

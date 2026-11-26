@@ -39,6 +39,16 @@ describe("API data-mode configuration", () => {
     );
   });
 
+  it("identifies the kiosk from the build-time setting with a safe default", async () => {
+    expect((await loadConfig()).kioskId).toBe("kiosk-01");
+
+    vi.stubEnv("VITE_SCANGO_KIOSK_ID", "kiosk-03");
+    expect((await loadConfig()).kioskId).toBe("kiosk-03");
+
+    vi.stubEnv("VITE_SCANGO_KIOSK_ID", "Kiosk 1!");
+    await expect(loadConfig()).rejects.toThrow("VITE_SCANGO_KIOSK_ID");
+  });
+
   it("rejects invalid modes and non-HTTP endpoint values", async () => {
     vi.stubEnv("VITE_IS_MOCK", "sometimes");
     await expect(loadConfig()).rejects.toThrow('VITE_IS_MOCK must be "true" or "false".');

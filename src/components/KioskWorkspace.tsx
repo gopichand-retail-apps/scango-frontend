@@ -10,6 +10,7 @@ const stateCopyKeys: Record<CheckoutSession["state"], string> = {
   paid: "statePaid",
   receipt_issued: "stateReceiptIssued",
   reset: "stateReset",
+  expired: "stateExpired",
 };
 import { BasketPanel } from "./BasketPanel";
 import { CatalogPanel } from "./CatalogPanel";

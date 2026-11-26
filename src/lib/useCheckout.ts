@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
   adjustQuantity,
   applyCoupon,
   checkWeight,
+  extendSession,
   getCatalog,
   getSession,
   issueReceipt,
@@ -15,7 +16,9 @@ import {
   simulateTender,
   startSession,
 } from "./api";
+import { clearCredentials } from "./credentials";
 import { copy } from "./format";
+import { useIdleSession } from "./useIdleSession";
 import type {
   Catalog,
   CheckoutSession,
@@ -34,6 +37,7 @@ interface CheckoutState {
   theme: ThemeMode | null;
   error: string | null;
   busy: boolean;
+  deadline: number | null;
 }
 
 const initialState: CheckoutState = {
@@ -44,7 +48,18 @@ const initialState: CheckoutState = {
   theme: null,
   error: null,
   busy: false,
+  deadline: null,
 };
+
+const terminalStates = new Set(["reset", "expired"]);
+const sessionGoneCodes = new Set(["SESSION_NOT_FOUND", "RECEIPT_NOT_FOUND", "SESSION_EXPIRED"]);
+
+// Pairs a server session with the monotonic deadline of its idle window.
+// Computed in event handlers, never during render.
+function withDeadline(session: CheckoutSession | null): Pick<CheckoutState, "session" | "deadline"> {
+  const open = session !== null && session.expiresInSeconds !== null && !terminalStates.has(session.state);
+  return { session, deadline: open ? performance.now() + (session.expiresInSeconds ?? 0) * 1000 : null };
+}
 
 export function useCheckout() {
   const [state, setState] = useState(initialState);
@@ -84,8 +99,8 @@ export function useCheckout() {
     try {
       await action();
     } catch (error) {
-      const sessionExpired =
-        error instanceof ApiError && (error.code === "SESSION_NOT_FOUND" || error.code === "RECEIPT_NOT_FOUND");
+      const sessionExpired = error instanceof ApiError && sessionGoneCodes.has(error.code);
+      if (sessionExpired) clearCredentials();
       const message =
         error instanceof ApiError
           ? error.message
@@ -94,7 +109,7 @@ export function useCheckout() {
             : "The kiosk action failed.";
       setState((current) => ({
         ...current,
-        ...(sessionExpired ? { session: null, receipt: null } : {}),
+        ...(sessionExpired ? { session: null, receipt: null, deadline: null } : {}),
         error: message,
       }));
     } finally {
@@ -106,8 +121,8 @@ export function useCheckout() {
     const model = state.model;
     if (!model) return;
     await perform(async () => {
-      const session = await startSession(model, crypto.randomUUID());
-      setState((current) => ({ ...current, session, receipt: null }));
+      const update = withDeadline(await startSession(model, crypto.randomUUID()));
+      setState((current) => ({ ...current, ...update, receipt: null }));
     });
   }
 
@@ -116,7 +131,8 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       const nextSession = await scanItem(model, session.id, barcode, source, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -125,7 +141,8 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       const nextSession = await adjustQuantity(model, session.id, productId, delta, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -134,7 +151,8 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       const nextSession = await applyCoupon(model, session.id, code, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -143,7 +161,8 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       const nextSession = await checkWeight(model, session.id, simulatedWeightGrams, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -152,7 +171,8 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       const nextSession = await resolveIntervention(model, session.id, action, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -161,7 +181,8 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       const nextSession = await prepareCheckout(model, session.id, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -170,7 +191,8 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       const result = await simulateTender(model, session.id, method, outcome, crypto.randomUUID());
-      setState((current) => ({ ...current, session: result.session }));
+      const update = withDeadline(result.session);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -180,7 +202,8 @@ export function useCheckout() {
     await perform(async () => {
       const nextReceipt = await issueReceipt(model, session.id, crypto.randomUUID());
       const nextSession = await getSession(model, session.id);
-      setState((current) => ({ ...current, session: nextSession, receipt: nextReceipt }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update, receipt: nextReceipt }));
     });
   }
 
@@ -189,9 +212,38 @@ export function useCheckout() {
     if (!model || !session) return;
     await perform(async () => {
       await resetSession(model, session.id, crypto.randomUUID());
-      setState((current) => ({ ...current, session: null, receipt: null }));
+      clearCredentials();
+      setState((current) => ({ ...current, session: null, receipt: null, deadline: null }));
     });
   }
+
+  async function extend() {
+    const { model, session } = state;
+    if (!model || !session) return;
+    await perform(async () => {
+      const update = withDeadline(await extendSession(model, session.id, crypto.randomUUID()));
+      setState((current) => ({ ...current, ...update }));
+    });
+  }
+
+  // Idle expiry clears the visible session locally; the server keeps the audited outcome.
+  const expire = useCallback(() => {
+    clearCredentials();
+    setState((current) => ({
+      ...current,
+      session: null,
+      receipt: null,
+      deadline: null,
+      error: current.model ? copy(current.model, "sessionTimedOut") : null,
+    }));
+  }, []);
+
+  const { deadline, ...view } = state;
+  const idle = useIdleSession({
+    deadline,
+    warningSeconds: state.model?.data.app.sessionWarningSeconds ?? 0,
+    onExpire: expire,
+  });
 
   async function retry() {
     const { model, session } = state;
@@ -202,7 +254,8 @@ export function useCheckout() {
     }
     await perform(async () => {
       const nextSession = await getSession(model, session.id);
-      setState((current) => ({ ...current, session: nextSession }));
+      const update = withDeadline(nextSession);
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -218,7 +271,9 @@ export function useCheckout() {
   }
 
   return {
-    ...state,
+    ...view,
+    idle,
+    extend,
     start,
     scan,
     quantity,
