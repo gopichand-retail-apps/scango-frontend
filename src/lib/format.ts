@@ -42,6 +42,11 @@ export function formatDate(model: PublicModel, value: string): string {
   }).format(new Date(value));
 }
 
+// Local wall-clock time for operational timestamps such as "waiting since".
+export function formatTime(model: PublicModel, value: string): string {
+  return new Intl.DateTimeFormat(model.locale, { hour: "numeric", minute: "2-digit" }).format(new Date(value));
+}
+
 export function formatNumber(model: PublicModel, value: number): string {
   return new Intl.NumberFormat(model.locale).format(value);
 }

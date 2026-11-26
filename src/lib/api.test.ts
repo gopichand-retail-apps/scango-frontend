@@ -13,7 +13,6 @@ import {
   loadModel,
   prepareCheckout,
   resetSession,
-  resolveIntervention,
   scanBatch,
   scanItem,
   simulateTender,
@@ -131,13 +130,6 @@ describe("API client", () => {
         path: `/sessions/${sessionId}/weight-check`,
         body: { simulatedWeightGrams: 980 },
         key: "weight-key",
-        data: emptySession,
-      },
-      {
-        run: () => resolveIntervention(model, sessionId, "approve_weight", "intervention-key"),
-        path: `/sessions/${sessionId}/intervention`,
-        body: { action: "approve_weight" },
-        key: "intervention-key",
         data: emptySession,
       },
       {

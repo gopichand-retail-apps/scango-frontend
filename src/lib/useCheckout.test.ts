@@ -22,7 +22,6 @@ vi.mock("./api", async (importOriginal) => {
     loadModel: vi.fn(),
     prepareCheckout: vi.fn(),
     resetSession: vi.fn(),
-    resolveIntervention: vi.fn(),
     scanItem: vi.fn(),
     simulateTender: vi.fn(),
     startSession: vi.fn(),
@@ -60,7 +59,6 @@ beforeEach(() => {
   apiMocks.adjustQuantity.mockResolvedValue(milkSession);
   apiMocks.applyCoupon.mockResolvedValue(milkSession);
   apiMocks.checkWeight.mockResolvedValue(milkSession);
-  apiMocks.resolveIntervention.mockResolvedValue(milkSession);
   apiMocks.prepareCheckout.mockResolvedValue(readySession);
   apiMocks.simulateTender.mockResolvedValue({ session: paidSession, approved: true, message: "Approved" });
   apiMocks.issueReceipt.mockResolvedValue(receipt);
@@ -68,6 +66,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   clearCredentials();
 });
@@ -99,7 +99,6 @@ describe("checkout hook", () => {
     await act(async () => result.current.quantity("dairy-milk", 1));
     await act(async () => result.current.coupon("FRESH10"));
     await act(async () => result.current.weigh(980));
-    await act(async () => result.current.intervene("approve_weight"));
     await act(async () => result.current.checkout());
     await act(async () => result.current.tender("cash", "approve"));
     await act(async () => result.current.issueReceipt());
@@ -111,7 +110,6 @@ describe("checkout hook", () => {
     expect(apiMocks.adjustQuantity).toHaveBeenCalledWith(model, milkSession.id, "dairy-milk", 1, "checkout-key");
     expect(apiMocks.applyCoupon).toHaveBeenCalledWith(model, milkSession.id, "FRESH10", "checkout-key");
     expect(apiMocks.checkWeight).toHaveBeenCalledWith(model, milkSession.id, 980, "checkout-key");
-    expect(apiMocks.resolveIntervention).toHaveBeenCalledWith(model, milkSession.id, "approve_weight", "checkout-key");
     expect(apiMocks.prepareCheckout).toHaveBeenCalledWith(model, milkSession.id, "checkout-key");
     expect(apiMocks.simulateTender).toHaveBeenCalledWith(model, milkSession.id, "cash", "approve", "checkout-key");
 
@@ -191,6 +189,57 @@ describe("checkout hook", () => {
     expect(getSessionToken()).toBeNull();
   });
 
+  it("checks for an attendant decision every three seconds while attention is required and visible", async () => {
+    const waiting: CheckoutSession = { ...milkSession, state: "attention_required", version: 7 };
+    const cleared: CheckoutSession = { ...milkSession, state: "scanning", version: 8 };
+    apiMocks.startSession.mockResolvedValueOnce(waiting);
+    const { result } = await loadHook();
+    let visibility: DocumentVisibilityState = "hidden";
+    vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
+    vi.useFakeTimers();
+    await act(async () => result.current.start());
+    apiMocks.getSession.mockClear();
+
+    await act(async () => vi.advanceTimersByTimeAsync(6_000));
+    expect(apiMocks.getSession).not.toHaveBeenCalled();
+    visibility = "visible";
+    apiMocks.getSession.mockResolvedValueOnce(cleared);
+    await act(async () => vi.advanceTimersByTimeAsync(3_000));
+    expect(apiMocks.getSession).toHaveBeenCalledWith(model, waiting.id);
+    expect(result.current.session).toEqual(cleared);
+
+    await act(async () => vi.advanceTimersByTimeAsync(9_000));
+    expect(apiMocks.getSession).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("a failed poll keeps the last confirmed state, but a vanished session returns to the welcome screen", async () => {
+    const waiting: CheckoutSession = { ...milkSession, state: "attention_required" };
+    apiMocks.startSession.mockResolvedValueOnce(waiting);
+    const { result } = await loadHook();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    vi.useFakeTimers();
+    await act(async () => result.current.start());
+
+    apiMocks.getSession.mockRejectedValueOnce(
+      new ApiError(copy(model, "serviceUnavailable"), 0, "SERVICE_UNAVAILABLE", null),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(3_000));
+    expect(result.current.session).toEqual(waiting);
+    apiMocks.getSession.mockRejectedValueOnce(new Error("socket detail"));
+    await act(async () => vi.advanceTimersByTimeAsync(3_000));
+    expect(result.current.session).toEqual(waiting);
+    expect(result.current.error).toBeNull();
+
+    apiMocks.getSession.mockRejectedValueOnce(
+      new ApiError(copy(model, "sessionTimedOut"), 410, "SESSION_EXPIRED", null),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(3_000));
+    expect(result.current.session).toBeNull();
+    expect(result.current.error).toBe(copy(model, "sessionTimedOut"));
+    vi.useRealTimers();
+  });
+
   it("retries failed boot and reports non-Error initialization failures", async () => {
     apiMocks.loadModel.mockRejectedValueOnce("unavailable");
     const { result } = renderHook(() => useCheckout());
@@ -211,7 +260,6 @@ describe("checkout hook", () => {
       await result.current.quantity("dairy-milk", 1);
       await result.current.coupon("FRESH10");
       await result.current.weigh(980);
-      await result.current.intervene("approve_weight");
       await result.current.checkout();
       await result.current.tender("cash", "approve");
       await result.current.issueReceipt();

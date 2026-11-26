@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { kioskId, resolveApiBaseUrl } from "../config";
-import { getSessionToken, setSessionToken } from "./credentials";
+import { getSessionToken, getStaffToken, setSessionToken } from "./credentials";
 import { copy } from "./format";
 import {
   catalogSchema,
@@ -36,11 +36,14 @@ export class ApiError extends Error {
   }
 }
 
+type RequestAuth = "session" | "staff";
+
 export type RequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
   signal?: AbortSignal;
   idempotencyKey?: string;
+  auth?: RequestAuth;
 };
 
 const errorCopyByCode: Readonly<Record<string, string>> = {
@@ -53,9 +56,19 @@ const errorCopyByCode: Readonly<Record<string, string>> = {
   SESSION_EXPIRED: "sessionTimedOut",
   KIOSK_NOT_REGISTERED: "kioskNotRecognised",
   IDEMPOTENCY_KEY_REUSED: "idempotencyConflict",
+  STAFF_AUTH_FAILED: "staffSignInFailed",
+  STAFF_THROTTLED: "staffThrottled",
+  STAFF_REQUIRED: "staffSignInRequired",
+  SESSION_VERSION_CONFLICT: "staffConflict",
+  INTERVENTION_LINE_MISMATCH: "staffConflict",
 };
 
-function credentialHeaders(): Record<string, string> {
+// Staff requests never carry the kiosk ID or the shopper token, and shopper requests never carry a staff token.
+function credentialHeaders(auth: RequestAuth): Record<string, string> {
+  if (auth === "staff") {
+    const staffToken = getStaffToken();
+    return staffToken ? { Authorization: `Bearer ${staffToken}` } : {};
+  }
   const token = getSessionToken();
   return { "X-Kiosk-Id": kioskId, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
@@ -72,7 +85,7 @@ async function sendRequest(model: PublicModel, path: string, options: RequestOpt
       signal: options.signal,
       headers: {
         "X-Request-ID": crypto.randomUUID(),
-        ...credentialHeaders(),
+        ...credentialHeaders(options.auth ?? "session"),
         ...(options.body ? { "Content-Type": "application/json" } : {}),
         ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
       },
@@ -211,19 +224,6 @@ export function checkWeight(
   return requestData(model, `/sessions/${sessionId}/weight-check`, checkoutSessionSchema, {
     method: "POST",
     body: { simulatedWeightGrams },
-    idempotencyKey,
-  });
-}
-
-export function resolveIntervention(
-  model: PublicModel,
-  sessionId: string,
-  action: "approve_weight" | "remove_item",
-  idempotencyKey: string,
-) {
-  return requestData(model, `/sessions/${sessionId}/intervention`, checkoutSessionSchema, {
-    method: "POST",
-    body: { action },
     idempotencyKey,
   });
 }

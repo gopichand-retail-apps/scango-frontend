@@ -133,45 +133,27 @@ describe("basket and scale screens", () => {
     expect(onCoupon).toHaveBeenLastCalledWith("");
   });
 
-  it("submits simulated scale readings and attendant actions", async () => {
+  it("submits simulated scale readings, then asks the shopper to wait with no approve controls", async () => {
     const user = userEvent.setup();
     const onWeigh = vi.fn().mockResolvedValue(undefined);
-    const onIntervention = vi.fn().mockResolvedValue(undefined);
     const pending = weightCheckSession("weight_check_pending");
     const attention = weightCheckSession("attention_required");
 
-    const { rerender } = render(
-      <ScaleCheckPanel
-        model={model}
-        session={pending}
-        busy={false}
-        onWeigh={onWeigh}
-        onIntervention={onIntervention}
-      />,
-    );
+    const { rerender } = render(<ScaleCheckPanel model={model} session={pending} busy={false} onWeigh={onWeigh} />);
     const reading = screen.getByRole("spinbutton", { name: copy(model, "weightMeasured") });
     await user.clear(reading);
     await user.type(reading, "980");
     await user.click(screen.getByRole("button", { name: copy(model, "confirmWeight") }));
     expect(onWeigh).toHaveBeenCalledWith(980);
 
-    rerender(
-      <ScaleCheckPanel
-        model={model}
-        session={attention}
-        busy={false}
-        onWeigh={onWeigh}
-        onIntervention={onIntervention}
-      />,
-    );
-    await user.click(screen.getByRole("button", { name: copy(model, "approveWeight") }));
-    await user.click(screen.getByRole("button", { name: copy(model, "removeLastScanned") }));
-    expect(onIntervention).toHaveBeenNthCalledWith(1, "approve_weight");
-    expect(onIntervention).toHaveBeenNthCalledWith(2, "remove_item");
+    rerender(<ScaleCheckPanel model={model} session={attention} busy={false} onWeigh={onWeigh} />);
+    expect(screen.getByRole("heading", { name: copy(model, "attendantCalledTitle") })).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(copy(model, "attendantCalledDescription"));
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
   it("shows a safe alert if the scale state has no pending item", () => {
-    render(<ScaleCheckPanel model={model} session={emptySession} busy={false} onWeigh={noop} onIntervention={noop} />);
+    render(<ScaleCheckPanel model={model} session={emptySession} busy={false} onWeigh={noop} />);
     expect(screen.getByRole("alert")).toHaveTextContent(copy(model, "weightMismatch"));
   });
 });
@@ -271,7 +253,6 @@ describe("payment, receipt, and workspace screens", () => {
       onCoupon: vi.fn().mockResolvedValue(undefined),
       onCheckout: vi.fn().mockResolvedValue(undefined),
       onWeigh: vi.fn().mockResolvedValue(undefined),
-      onIntervention: vi.fn().mockResolvedValue(undefined),
       onTender: vi.fn().mockResolvedValue(undefined),
       onReceipt: vi.fn().mockResolvedValue(undefined),
     };
@@ -294,6 +275,6 @@ describe("payment, receipt, and workspace screens", () => {
         {...callbacks}
       />,
     );
-    expect(screen.getByRole("heading", { name: copy(model, "attendantTitle") })).toBeVisible();
+    expect(screen.getByRole("heading", { name: copy(model, "attendantCalledTitle") })).toBeVisible();
   });
 });

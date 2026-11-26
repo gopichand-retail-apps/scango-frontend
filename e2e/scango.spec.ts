@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openStaffConsole, triggerWeightMismatch } from "./staff-helpers";
 
 const backendPort = Number(process.env.SCANGO_E2E_BACKEND_PORT ?? 5112);
 const apiBaseUrl = `http://127.0.0.1:${backendPort}/api/v1`;
@@ -78,26 +79,30 @@ test("Flow 4: validates a coupon and recalculates the total on the API", async (
   await expect(page.getByText("$15.87")).toBeVisible();
 });
 
-test("Flow 5: a scale mismatch blocks checkout until a team member approves", async ({ page }) => {
-  await startCheckout(page);
-  await scanBarcode(page, "QS-APL-014");
-  await page.getByRole("spinbutton", { name: "Simulated scale reading (g)" }).fill("1200");
-  await page.getByRole("button", { name: "Confirm scale reading" }).click();
-  await expect(page.getByRole("heading", { name: "Team member check" })).toBeVisible();
+test("Flow 5: a scale mismatch blocks checkout until a signed-in attendant approves", async ({ page, browser }) => {
+  await triggerWeightMismatch(page, "QS-APL-014", "1200");
   await expect(page.getByRole("button", { name: "Review and pay" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Approve simulated check" }).click();
-  await expect(page.getByRole("heading", { name: "Team member check" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /approve/i })).toHaveCount(0);
+
+  const staffPage = await openStaffConsole(browser, "att-01");
+  await staffPage.getByLabel("Reason").selectOption("weight_verified");
+  await staffPage.getByRole("button", { name: "Approve weight" }).click();
+  await expect(staffPage.getByRole("status")).toContainText("Exception cleared");
+
+  await expect(page.getByRole("heading", { name: "An attendant is on the way" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Review and pay" })).toBeEnabled();
+  await staffPage.context().close();
 });
 
-test("Flow 6: an attendant can remove an item after a failed weight check", async ({ page }) => {
-  await startCheckout(page);
-  await scanBarcode(page, "QS-BAN-022");
-  await page.getByRole("spinbutton", { name: "Simulated scale reading (g)" }).fill("2000");
-  await page.getByRole("button", { name: "Confirm scale reading" }).click();
-  await page.getByRole("button", { name: "Remove last scanned item" }).click();
+test("Flow 6: an attendant can remove an item after a failed weight check", async ({ page, browser }) => {
+  await triggerWeightMismatch(page, "QS-BAN-022", "2000");
+  const staffPage = await openStaffConsole(browser, "att-02");
+  await staffPage.getByLabel("Reason").selectOption("item_mismatch");
+  await staffPage.getByRole("button", { name: "Remove item" }).click();
+
   await expect(page.locator(".basket-line")).toHaveCount(0);
   await expect(page.getByText("Your basket is waiting for its first item.")).toBeVisible();
+  await staffPage.context().close();
 });
 
 test("Flow 7: checkout totals come from server-owned prices and tax", async ({ page }) => {

@@ -73,7 +73,6 @@ export default function App() {
       onCoupon={kiosk.coupon}
       onCheckout={kiosk.checkout}
       onWeigh={kiosk.weigh}
-      onIntervention={kiosk.intervene}
       onTender={kiosk.tender}
       onReceipt={kiosk.issueReceipt}
     />

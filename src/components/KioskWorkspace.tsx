@@ -27,7 +27,6 @@ interface KioskWorkspaceProps {
   onCoupon: (code: string) => Promise<void>;
   onCheckout: () => Promise<void>;
   onWeigh: (grams: number) => Promise<void>;
-  onIntervention: (action: "approve_weight" | "remove_item") => Promise<void>;
   onTender: (method: TenderMethod, outcome: SimulationOutcome) => Promise<void>;
   onReceipt: () => Promise<void>;
 }
@@ -101,7 +100,6 @@ export function KioskWorkspace(props: KioskWorkspaceProps) {
               session={props.session}
               busy={props.busy}
               onWeigh={props.onWeigh}
-              onIntervention={props.onIntervention}
             />
           ) : null}
           {props.session.state === "ready_to_pay" || props.session.state === "paid" ? (

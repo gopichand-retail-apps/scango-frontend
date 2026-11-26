@@ -45,7 +45,7 @@ The browser must not grant roles or confirm prices, balances, payments, stock, o
 
 ### C4 system context
 
-The shopper is an anonymous local user whose checkout is bound to this kiosk by a bearer token held only in module memory ([src/lib/credentials.ts](../src/lib/credentials.ts)). Attendant actions are simulated controls, not staff identity.
+The shopper is an anonymous local user whose checkout is bound to this kiosk by a bearer token held only in module memory ([src/lib/credentials.ts](../src/lib/credentials.ts)). Attendants sign in at the separate `/staff` console ([src/staff](../src/staff)) with a synthetic staff code and PIN; the staff token is also memory-only.
 
 ```mermaid
 flowchart LR
@@ -88,7 +88,9 @@ The frontend fetches `public/scango-model.json` with `cache: "no-store"`. Both r
 | [src/main.tsx](../src/main.tsx)                                                                                                                                                       | Web entry and composition                                          |
 | [src/lib/api.ts](../src/lib/api.ts)                                                                                                                                                   | API transport and response boundary                                |
 | [src/config.ts](../src/config.ts)                                                                                                                                                     | Build-time API mode selection and kiosk ID (`VITE_SCANGO_KIOSK_ID`) |
-| [src/lib/credentials.ts](../src/lib/credentials.ts)                                                                                                                                   | In-memory session token; never persisted                           |
+| [src/lib/credentials.ts](../src/lib/credentials.ts)                                                                                                                                   | In-memory shopper and staff tokens; never persisted                |
+| [src/lib/staff-api.ts](../src/lib/staff-api.ts)<br>[src/staff/useStaff.ts](../src/staff/useStaff.ts)                                                                                   | Staff transport and console state (polling, conflicts, sign-out)   |
+| [src/lib/model-schema.ts](../src/lib/model-schema.ts)                                                                                                                                 | Strict content-model validator (mirrors the backend)               |
 | [src/lib/useIdleSession.ts](../src/lib/useIdleSession.ts)<br>[src/components/IdleWarning.tsx](../src/components/IdleWarning.tsx)                                                       | Monotonic idle countdown and the extend/start-over alert dialog    |
 | [src/lib/schemas.ts](../src/lib/schemas.ts)                                                                                                                                           | Runtime boundary validation                                        |
 | [src/App.tsx](../src/App.tsx)<br>[src/components/KioskWorkspace.tsx](../src/components/KioskWorkspace.tsx)<br>[src/components/WelcomeScreen.tsx](../src/components/WelcomeScreen.tsx) | Screens, composition, and interaction owners; see screen inventory |
@@ -113,6 +115,7 @@ UI entry and interaction owners:
 - [src/components/ReceiptPanel.tsx](../src/components/ReceiptPanel.tsx)
 - [src/components/ScaleCheckPanel.tsx](../src/components/ScaleCheckPanel.tsx)
 - [src/components/WelcomeScreen.tsx](../src/components/WelcomeScreen.tsx)
+- [src/staff/StaffApp.tsx](../src/staff/StaffApp.tsx) and [src/staff/StaffConsole.tsx](../src/staff/StaffConsole.tsx): the attendant console at `/staff`, chosen in [src/main.tsx](../src/main.tsx) by path and never linked from the kiosk. Sign-in form (staff code, PIN as a password field), then the store's exceptions with a required reason select and Approve weight / Remove item buttons. Success and conflict messages use `role=status` and `role=alert`; the list refreshes every 3 seconds while visible. Layout is a single column at 320 px.
 - [src/components/IdleWarning.tsx](../src/components/IdleWarning.tsx): an `alertdialog` shown over any open checkout 30 seconds before the server-issued idle window ends. Focus starts on **Keep my checkout**, Tab stays inside the two choices, and the remaining seconds are announced at ten-second marks. The countdown runs on `performance.now()`, so a wrong kiosk clock cannot end or freeze a checkout. At zero the visible checkout clears and the welcome screen explains why.
 
 The active model is [public/scango-model.json](../public/scango-model.json). Preserve existing loading, empty, validation, permission, success, and failure states; model text does not provide server identity. This is a web SPA; the current source owns view/tab selection and component lifecycle. The Vercel rewrite is hosting configuration, not an additional UI router. Follow the authored source for request cancellation, retry, focus cleanup, and local preference behavior; do not infer an offline queue where none exists.
@@ -209,18 +212,20 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-  actor Attendant as Simulated attendant action
-  participant UI as Kiosk
+  actor Attendant
+  participant Staff as /staff console
+  participant Kiosk
   participant API as Checkout API
-  participant DB as SQLite
-  Attendant->>UI: Approve simulator check or remove item
-  UI->>API: POST /intervention + Idempotency-Key
-  API->>API: Require attention_required state
-  API->>DB: Record intervention and transition atomically
-  API-->>UI: Updated session
+  Kiosk->>API: GET /sessions/{id} every 3 s while attention_required
+  Attendant->>Staff: Sign in, choose reason, approve or remove
+  Staff->>API: POST /intervention (staff bearer, reason, line, expectedVersion)
+  API-->>Staff: sessionId, state, version (or 409 with current state)
+  Staff->>API: GET /staff/exceptions (refresh)
+  Kiosk->>API: next poll sees scanning
+  API-->>Kiosk: Updated session
 ```
 
-**Precondition:** a scale mismatch is in `attention_required`. **Success:** approval marks the simulated check resolved, or removal deletes the blocked line. **Failure/recovery:** invalid state leaves the basket unchanged. **Authorization:** this endpoint has no staff identity or role gate; that is an explicit deployment blocker.
+**Precondition:** a scale mismatch is in `attention_required`; the kiosk shows the waiting state with no approve controls. **Success:** the attendant's decision moves the kiosk back to scanning on its next poll. **Failure/recovery:** a decision on a stale version or by a second attendant gets the conflict message and a refreshed list; a wrong PIN or throttled sign-in shows model copy and clears the PIN field; a failed kiosk poll keeps the last confirmed basket, while an expired or vanished session returns to the welcome screen. **Authorization:** a staff token at the session's store is required; shopper tokens are refused.
 
 #### 7. Review checkout totals
 
@@ -409,18 +414,20 @@ The [OpenAPI document](https://github.com/gopichand-retail-apps/scango-backend/b
 | `POST /sessions`                                                                     | A registered kiosk            | `X-Kiosk-Id`   | Creates a session bound to that kiosk; returns the bearer token once |
 | `GET /sessions/{sessionId}` and `GET /receipt`                                       | The owning kiosk              | Bearer token   | Token digest and kiosk must match; otherwise the same 404 as unknown |
 | Session scan, quantity, coupon, weight, checkout, tender, receipt, reset and extend  | The owning kiosk              | Bearer token   | Checked before body parsing or idempotent replay; 410 once idle      |
-| `POST /intervention`                                                                 | Any caller who knows the UUID | None           | Attendant role is not authenticated or authorized                    |
+| `POST /staff/sessions`                                                               | Any local caller              | Code + PIN     | Uniform 401; 5 failures per code per minute then 429; audited        |
+| `GET /staff/exceptions`, `POST /staff/sign-out`                                      | Signed-in attendant           | Staff bearer   | Location-scoped; line and version only; 15-minute idle token         |
+| `POST /intervention`                                                                 | Signed-in attendant           | Staff bearer   | Same store, current version, matching line; one decision per version |
 
 The API binds to loopback by default. UUIDs and CORS are not authorization. A
 session can only be read or changed with its kiosk's token; sessions expire after
-180 idle seconds. The attendant route still has no staff identity, which remains
-a deployment blocker.
+180 idle seconds. Exceptions need a staff token at the session's store. The
+synthetic PIN identities are a loopback-demo boundary, which remains a deployment blocker.
 
 The tender outcome is deliberately a local user-selectable simulator result. It cannot authorize or move money. A declined attempt is recorded and leaves the session payable; the same idempotency key replays the original response. Receipt issuance requires an approved simulated tender.
 
 ## 8. Security, privacy, and egress
 
-Current release limitation: **Shopper sessions are bound to this kiosk by an in-memory bearer token with an idle warning and expiry (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.**
+Current release limitation: **Shopper sessions are bound to this kiosk by an in-memory bearer token with an idle warning and expiry (SCN-01). Only an attendant signed in at the same store can clear an exception, from the separate `/staff` console (SCN-02); attendant identities are synthetic fixture profiles with PINs. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.**
 
 Only the local simulator controls in the current source are implemented. CORS, a role label, and mode selection do not provide a new production identity boundary.
 
@@ -462,7 +469,7 @@ The two Git repositories remain separate. Each owns one maintained README and th
 | Capability                      | Acceptance                                                        | Owner/path                         | Current status                                                | Evidence                               | Risk                                                                                                                                                                                                                        |
 | ------------------------------- | ----------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Repository-local architecture   | Guide available in this checkout and linked from README           | docs/architecture.md; README.md    | Documented and validated                                      | File, link, and diagram checks         | Keep documentation consistent with source changes                                                                                                                                                                           |
-| UI composition and API boundary | Preserve existing workflows and failure states                    | src/main.tsx and source map        | Implemented; application verification limits are listed below | Current source and existing app design | Shopper sessions are bound to this kiosk by an in-memory bearer token with an idle warning and expiry (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline. |
+| UI composition and API boundary | Preserve existing workflows and failure states                    | src/main.tsx and source map        | Implemented; application verification limits are listed below | Current source and existing app design | Shopper sessions are bound to this kiosk by an in-memory bearer token with an idle warning and expiry (SCN-01). Only an attendant signed in at the same store can clear an exception, from the separate `/staff` console (SCN-02); attendant identities are synthetic fixture profiles with PINs. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline. |
 | Public deployment               | Verified identity, data durability, recovery, and hosted behavior | Existing deployment/API boundaries | Needs separate hardening/verification                         | No new hosted evidence                 | Local checks do not establish production readiness                                                                                                                                                                          |
 
 ## 13. Dated verification and limitations
@@ -472,7 +479,7 @@ Last documentation review: **2026-11-09**. The checks below distinguish document
 - Repository-local guide, README link, source-path references, section/contents anchors, and Mermaid syntax: passed documentation validation.
 - New application tests/builds, coverage, dependency audits, browser/device accessibility/performance, hosted CI, and Vercel deployment: **not rerun for the documentation updates**.
 - Frontend production builds passed on 2026-11-09 with Node 24.15.0. Build success does not establish that all application quality gates pass.
-- Outstanding baseline limit: Shopper sessions are bound to this kiosk by an in-memory bearer token with an idle warning and expiry (SCN-01); staff authorization is absent until SCN-02. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.
+- Outstanding baseline limit: Shopper sessions are bound to this kiosk by an in-memory bearer token with an idle warning and expiry (SCN-01). Only an attendant signed in at the same store can clear an exception, from the separate `/staff` console (SCN-02); attendant identities are synthetic fixture profiles with PINs. Two Windows backend tests and critical server coverage fail in the baseline; receipt-only print CSS is absent. Separate IT fixes do not change this baseline.
 
 The baseline results below record earlier validation. Re-run the listed commands against the current revision before release.
 

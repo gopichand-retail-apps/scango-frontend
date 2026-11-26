@@ -11,7 +11,6 @@ import {
   loadModel,
   prepareCheckout,
   resetSession,
-  resolveIntervention,
   scanItem,
   simulateTender,
   startSession,
@@ -166,16 +165,6 @@ export function useCheckout() {
     });
   }
 
-  async function intervene(action: "approve_weight" | "remove_item") {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const nextSession = await resolveIntervention(model, session.id, action, crypto.randomUUID());
-      const update = withDeadline(nextSession);
-      setState((current) => ({ ...current, ...update }));
-    });
-  }
-
   async function checkout() {
     const { model, session } = state;
     if (!model || !session) return;
@@ -238,6 +227,29 @@ export function useCheckout() {
     }));
   }, []);
 
+  // While an attendant is needed, check for their decision every 3 s while the kiosk is visible.
+  // A failed poll keeps the last confirmed basket; a vanished or expired session returns to the welcome screen.
+  const pollModel = state.model;
+  const pollSessionId = state.session?.state === "attention_required" ? state.session.id : null;
+  useEffect(() => {
+    if (!pollModel || !pollSessionId) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      getSession(pollModel, pollSessionId).then(
+        (next) => {
+          const update = withDeadline(next);
+          setState((current) => (current.session?.id === pollSessionId ? { ...current, ...update } : current));
+        },
+        (error: unknown) => {
+          if (!(error instanceof ApiError) || !sessionGoneCodes.has(error.code)) return;
+          clearCredentials();
+          setState((current) => ({ ...current, session: null, receipt: null, deadline: null, error: error.message }));
+        },
+      );
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [pollModel, pollSessionId]);
+
   const { deadline, ...view } = state;
   const idle = useIdleSession({
     deadline,
@@ -279,7 +291,6 @@ export function useCheckout() {
     quantity,
     coupon,
     weigh,
-    intervene,
     checkout,
     tender,
     issueReceipt: issueReceiptAction,

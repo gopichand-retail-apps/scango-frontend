@@ -1,0 +1,202 @@
+.staff-app {
+  min-height: 100vh;
+}
+
+.staff-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  min-height: 100vh;
+}
+
+.staff-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+
+.staff-header-title {
+  font-family: "Roboto Slab Variable", "Roboto Slab", serif;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.staff-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.staff-identity strong {
+  color: var(--ink);
+}
+
+.staff-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px 16px 40px;
+}
+
+.staff-card {
+  width: min(760px, 100%);
+  padding: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.staff-card h1 {
+  margin-bottom: 6px;
+  font-family: "Roboto Slab Variable", "Roboto Slab", serif;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.staff-sign-in {
+  width: min(420px, 100%);
+}
+
+.staff-sign-in p,
+.staff-empty {
+  color: var(--muted);
+}
+
+.staff-form {
+  display: grid;
+  gap: 8px;
+}
+
+.staff-form label,
+.staff-exception-decision label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.staff-form input,
+.staff-exception-decision select {
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--ink);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+}
+
+.staff-form .button {
+  min-height: 48px;
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.staff-exceptions {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.staff-exception {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 14px;
+  padding: 14px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--coral);
+  border-radius: 4px;
+}
+
+.staff-exception-line {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.staff-exception-line strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.staff-exception-decision {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.staff-exception-decision select {
+  width: 100%;
+  min-width: 0;
+}
+
+.staff-exception-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.staff-exception-actions .button {
+  min-height: 44px;
+  font-size: 13px;
+}
+
+.staff-message {
+  width: min(760px, 100%);
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.staff-message.is-error {
+  color: var(--negative);
+  border-color: color-mix(in srgb, var(--negative) 35%, var(--line));
+}
+
+.staff-message.is-success {
+  color: var(--positive);
+  border-color: color-mix(in srgb, var(--positive) 35%, var(--line));
+}
+
+@media (max-width: 640px) {
+  .staff-exception {
+    grid-template-columns: 1fr;
+  }
+
+  .staff-identity {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .staff-header {
+    padding: 12px 16px;
+  }
+
+  .staff-card {
+    padding: 16px;
+  }
+
+  .staff-exception {
+    padding: 12px;
+  }
+}
+
+@media (max-width: 380px) {
+  .staff-exception-actions {
+    grid-template-columns: 1fr;
+  }
+}

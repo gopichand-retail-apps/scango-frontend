@@ -24,7 +24,6 @@ function createKiosk(overrides: Partial<CheckoutView> = {}): CheckoutView {
     quantity: vi.fn().mockResolvedValue(undefined),
     coupon: vi.fn().mockResolvedValue(undefined),
     weigh: vi.fn().mockResolvedValue(undefined),
-    intervene: vi.fn().mockResolvedValue(undefined),
     checkout: vi.fn().mockResolvedValue(undefined),
     tender: vi.fn().mockResolvedValue(undefined),
     issueReceipt: vi.fn().mockResolvedValue(undefined),
