@@ -1,4 +1,4 @@
-import { AlertTriangle, Check, Scale, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, Scale } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { copy, formatNumber } from "../lib/format";
 import type { CheckoutSession, PublicModel } from "../lib/types";
@@ -8,13 +8,11 @@ export function ScaleCheckPanel({
   session,
   busy,
   onWeigh,
-  onIntervention,
 }: {
   model: PublicModel;
   session: CheckoutSession;
   busy: boolean;
   onWeigh: (grams: number) => Promise<void>;
-  onIntervention: (action: "approve_weight" | "remove_item") => Promise<void>;
 }) {
   const item = session.pendingWeight;
   const [reading, setReading] = useState(item?.expectedWeightGrams ?? 0);
@@ -48,9 +46,9 @@ export function ScaleCheckPanel({
       <div className="scale-panel-copy">
         <span className="section-kicker">{copy(model, "roleAttendant")}</span>
         <h2 id="scale-heading">
-          {copy(model, session.state === "attention_required" ? "attendantTitle" : "weightCheckTitle")}
+          {copy(model, session.state === "attention_required" ? "attendantCalledTitle" : "weightCheckTitle")}
         </h2>
-        <p>{session.state === "attention_required" ? copy(model, "weightMismatch") : item.name}</p>
+        <p>{item.name}</p>
         {session.state === "weight_check_pending" ? (
           <form className="scale-form" onSubmit={submitWeight}>
             <label>
@@ -76,27 +74,9 @@ export function ScaleCheckPanel({
             </button>
           </form>
         ) : (
-          <div className="intervention-actions">
-            <p className="role-boundary">{copy(model, "attendantDescription")}</p>
-            <button
-              className="button button-primary"
-              type="button"
-              disabled={busy}
-              onClick={() => void onIntervention("approve_weight")}
-            >
-              <Check size={16} aria-hidden="true" />
-              {copy(model, "approveWeight")}
-            </button>
-            <button
-              className="button button-secondary"
-              type="button"
-              disabled={busy}
-              onClick={() => void onIntervention("remove_item")}
-            >
-              <Trash2 size={16} aria-hidden="true" />
-              {copy(model, "removeLastScanned")}
-            </button>
-          </div>
+          <p className="attendant-waiting" role="status">
+            {copy(model, "attendantCalledDescription")}
+          </p>
         )}
       </div>
     </section>

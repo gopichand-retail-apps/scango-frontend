@@ -26,6 +26,20 @@ describe("runtime contracts", () => {
       candidate: { ...model, data: { ...model.data, apiBaseUrl: "http://127.0.0.1" } },
     },
     { name: "architecture in public content", candidate: { ...model, architecture: {} } },
+    {
+      name: "an idle warning that starts after expiry",
+      candidate: { ...model, data: { ...model.data, app: { ...model.data.app, sessionWarningSeconds: 180 } } },
+    },
+    {
+      name: "an unknown staff reason",
+      candidate: {
+        ...model,
+        messages: {
+          ...model.messages,
+          staffReasons: Object.assign({}, model.messages.staffReasons, { other: "Other" }),
+        },
+      },
+    },
   ];
   it.each(invalidModels)("rejects $name", ({ candidate }) => {
     expect(publicModelSchema.safeParse(candidate).success).toBe(false);

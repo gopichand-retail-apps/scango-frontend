@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { openStaffConsole, triggerWeightMismatch } from "./staff-helpers";
 
 const backendPort = Number(process.env.SCANGO_E2E_BACKEND_PORT ?? 5112);
 const apiBaseUrl = `http://127.0.0.1:${backendPort}/api/v1`;
@@ -78,26 +79,30 @@ test("Flow 4: validates a coupon and recalculates the total on the API", async (
   await expect(page.getByText("$15.87")).toBeVisible();
 });
 
-test("Flow 5: a scale mismatch blocks checkout until a team member approves", async ({ page }) => {
-  await startCheckout(page);
-  await scanBarcode(page, "QS-APL-014");
-  await page.getByRole("spinbutton", { name: "Simulated scale reading (g)" }).fill("1200");
-  await page.getByRole("button", { name: "Confirm scale reading" }).click();
-  await expect(page.getByRole("heading", { name: "Team member check" })).toBeVisible();
+test("Flow 5: a scale mismatch blocks checkout until a signed-in attendant approves", async ({ page, browser }) => {
+  await triggerWeightMismatch(page, "QS-APL-014", "1200");
   await expect(page.getByRole("button", { name: "Review and pay" })).toHaveCount(0);
-  await page.getByRole("button", { name: "Approve simulated check" }).click();
-  await expect(page.getByRole("heading", { name: "Team member check" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /approve/i })).toHaveCount(0);
+
+  const staffPage = await openStaffConsole(browser, "att-01");
+  await staffPage.getByLabel("Reason").selectOption("weight_verified");
+  await staffPage.getByRole("button", { name: "Approve weight" }).click();
+  await expect(staffPage.getByRole("status")).toContainText("Exception cleared");
+
+  await expect(page.getByRole("heading", { name: "An attendant is on the way" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Review and pay" })).toBeEnabled();
+  await staffPage.context().close();
 });
 
-test("Flow 6: an attendant can remove an item after a failed weight check", async ({ page }) => {
-  await startCheckout(page);
-  await scanBarcode(page, "QS-BAN-022");
-  await page.getByRole("spinbutton", { name: "Simulated scale reading (g)" }).fill("2000");
-  await page.getByRole("button", { name: "Confirm scale reading" }).click();
-  await page.getByRole("button", { name: "Remove last scanned item" }).click();
+test("Flow 6: an attendant can remove an item after a failed weight check", async ({ page, browser }) => {
+  await triggerWeightMismatch(page, "QS-BAN-022", "2000");
+  const staffPage = await openStaffConsole(browser, "att-02");
+  await staffPage.getByLabel("Reason").selectOption("item_mismatch");
+  await staffPage.getByRole("button", { name: "Remove item" }).click();
+
   await expect(page.locator(".basket-line")).toHaveCount(0);
   await expect(page.getByText("Your basket is waiting for its first item.")).toBeVisible();
+  await staffPage.context().close();
 });
 
 test("Flow 7: checkout totals come from server-owned prices and tax", async ({ page }) => {
@@ -237,12 +242,13 @@ test("expired checkout sessions clear stale basket state and require a fresh che
 test("uses generic model copy for unknown API error codes", async ({ page }) => {
   await startCheckout(page);
   const rawMessage = "Internal database connection string";
+  // A definite refusal (4xx) with an unrecognised code; 5xx outcomes are unknown and show the awaiting panel instead.
   await page.route(/\/api\/v1\/sessions\/[0-9a-f-]+\/scan$/, async (route) => {
     await route.fulfill({
-      status: 500,
+      status: 422,
       contentType: "application/json",
       body: JSON.stringify({
-        error: { code: "INTERNAL_ERROR", message: rawMessage, requestId: "test-request" },
+        error: { code: "UNRECOGNISED_RULE", message: rawMessage, requestId: "test-request" },
       }),
     });
   });
@@ -254,13 +260,17 @@ test("uses generic model copy for unknown API error codes", async ({ page }) => 
 
 test("batch scan replay does not duplicate items", async ({ page }) => {
   const start = await page.request.post(`${apiBaseUrl}/sessions`, {
-    headers: { "Idempotency-Key": "playwright-start-session" },
+    headers: { "Idempotency-Key": "playwright-start-session", "X-Kiosk-Id": "kiosk-01" },
     data: {},
   });
   const startPayload = await start.json();
   const sessionId = String(startPayload.data.id);
   const request = {
-    headers: { "Idempotency-Key": "playwright-scan-batch" },
+    headers: {
+      "Idempotency-Key": "playwright-scan-batch",
+      "X-Kiosk-Id": "kiosk-01",
+      Authorization: `Bearer ${String(startPayload.data.accessToken)}`,
+    },
     data: { barcodes: ["QS-MLK-044", "QS-EGG-056"] },
   };
   const first = await page.request.post(`${apiBaseUrl}/sessions/${sessionId}/scan-batch`, request);
@@ -280,12 +290,11 @@ test("recovers after a scan API interruption without losing the basket", async (
   await page.route(scanRoute, (route) => route.abort());
   await page.getByRole("textbox", { name: "Barcode or item code" }).fill("QS-MLK-044");
   await page.getByRole("button", { name: "Add item" }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByText("Waiting for confirmation")).toBeVisible();
   await page.unroute(scanRoute);
-  await page.getByRole("button", { name: "Try again" }).click();
-  await page.getByRole("textbox", { name: "Barcode or item code" }).fill("QS-MLK-044");
-  await page.getByRole("button", { name: "Add item" }).click();
+  await page.getByRole("button", { name: "Check again" }).click();
   await expect(page.locator(".basket-line").filter({ hasText: "Cream-top milk" })).toBeVisible();
+  await expect(page.locator(".basket-line")).toHaveCount(1);
 });
 
 test("theme preference persists and mobile layout stays inside the viewport", async ({ page }) => {

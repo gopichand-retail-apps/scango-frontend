@@ -1,21 +1,25 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   adjustQuantity,
   applyCoupon,
   checkWeight,
+  extendSession,
   getCatalog,
   getSession,
+  isRetryableFailure,
   issueReceipt,
   loadModel,
   prepareCheckout,
   resetSession,
-  resolveIntervention,
   scanItem,
   simulateTender,
   startSession,
 } from "./api";
+import { clearCredentials } from "./credentials";
 import { copy } from "./format";
+import { createIntentKeys } from "./intent-keys";
+import { useIdleSession } from "./useIdleSession";
 import type {
   Catalog,
   CheckoutSession,
@@ -34,6 +38,19 @@ interface CheckoutState {
   theme: ThemeMode | null;
   error: string | null;
   busy: boolean;
+  deadline: number | null;
+  awaiting: AwaitingIntent | null;
+  welcomeFocus: boolean;
+}
+
+export interface AwaitingIntent {
+  kind: string;
+  retry: () => Promise<void>;
+}
+
+interface Intent {
+  kind: string;
+  payload: Record<string, unknown>;
 }
 
 const initialState: CheckoutState = {
@@ -44,11 +61,28 @@ const initialState: CheckoutState = {
   theme: null,
   error: null,
   busy: false,
+  deadline: null,
+  awaiting: null,
+  welcomeFocus: false,
 };
+
+const terminalStates = new Set(["reset", "expired"]);
+const sessionGoneCodes = new Set(["SESSION_NOT_FOUND", "RECEIPT_NOT_FOUND", "SESSION_EXPIRED"]);
+
+// Pairs a server session with the monotonic deadline of its idle window.
+// Computed in event handlers, never during render.
+function withDeadline(session: CheckoutSession | null): Pick<CheckoutState, "session" | "deadline"> {
+  if (session === null || session.expiresInSeconds === null || terminalStates.has(session.state)) {
+    return { session, deadline: null };
+  }
+  return { session, deadline: performance.now() + session.expiresInSeconds * 1000 };
+}
 
 export function useCheckout() {
   const [state, setState] = useState(initialState);
   const [bootRevision, setBootRevision] = useState(0);
+  const [keys] = useState(() => createIntentKeys());
+  const inFlight = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -79,119 +113,162 @@ export function useCheckout() {
     return () => controller.abort();
   }, [bootRevision]);
 
-  async function perform(action: () => Promise<void>) {
-    setState((current) => ({ ...current, busy: true, error: null }));
+  function endSession(error: string | null) {
+    clearCredentials();
+    keys.clear();
+    setState((current) => ({
+      ...current,
+      session: null,
+      receipt: null,
+      deadline: null,
+      awaiting: null,
+      welcomeFocus: true,
+      error,
+    }));
+  }
+
+  function reportFailure(error: unknown) {
+    if (error instanceof ApiError && sessionGoneCodes.has(error.code)) {
+      endSession(error.message);
+      return;
+    }
+    const message =
+      error instanceof ApiError
+        ? error.message
+        : state.model
+          ? copy(state.model, "errorGeneric")
+          : "The kiosk action failed.";
+    setState((current) => ({ ...current, error: message }));
+  }
+
+  // One write at a time. The intent key survives an unknown outcome (network error, timeout, 5xx), so the
+  // retry offered by the awaiting-confirmation panel replays rather than repeats. A definite answer discards it.
+  async function perform(intent: Intent | null, action: (key: string) => Promise<void>) {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    const key = intent ? keys.keyFor(intent.kind, intent.payload) : "";
+    setState((current) => ({ ...current, busy: true, error: null, awaiting: null }));
     try {
-      await action();
+      await action(key);
+      if (intent) keys.confirm(intent.kind);
     } catch (error) {
-      const sessionExpired =
-        error instanceof ApiError && (error.code === "SESSION_NOT_FOUND" || error.code === "RECEIPT_NOT_FOUND");
-      const message =
-        error instanceof ApiError
-          ? error.message
-          : state.model
-            ? copy(state.model, "errorGeneric")
-            : "The kiosk action failed.";
-      setState((current) => ({
-        ...current,
-        ...(sessionExpired ? { session: null, receipt: null } : {}),
-        error: message,
-      }));
+      if (intent && isRetryableFailure(error)) {
+        const retry = () => perform(intent, action);
+        setState((current) => ({ ...current, awaiting: { kind: intent.kind, retry } }));
+      } else {
+        if (intent) keys.confirm(intent.kind);
+        reportFailure(error);
+      }
     } finally {
+      inFlight.current = false;
       setState((current) => ({ ...current, busy: false }));
     }
+  }
+
+  async function sessionWrite(
+    kind: string,
+    payload: Record<string, unknown>,
+    call: (model: PublicModel, sessionId: string, key: string) => Promise<CheckoutSession>,
+  ) {
+    const { model, session } = state;
+    if (!model || !session) return;
+    await perform({ kind, payload: { ...payload, sessionId: session.id } }, async (key) => {
+      const update = withDeadline(await call(model, session.id, key));
+      setState((current) => ({ ...current, ...update }));
+    });
   }
 
   async function start() {
     const model = state.model;
     if (!model) return;
-    await perform(async () => {
-      const session = await startSession(model, crypto.randomUUID());
-      setState((current) => ({ ...current, session, receipt: null }));
+    await perform({ kind: "start", payload: {} }, async (key) => {
+      const update = withDeadline(await startSession(model, key));
+      setState((current) => ({ ...current, ...update, receipt: null, welcomeFocus: false }));
     });
   }
 
-  async function scan(barcode: string, source: "barcode" | "search") {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const nextSession = await scanItem(model, session.id, barcode, source, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
+  const scan = (barcode: string, source: "barcode" | "search") =>
+    sessionWrite("scan", { barcode, source }, (model, id, key) => scanItem(model, id, barcode, source, key));
+  const quantity = (productId: string, delta: number) =>
+    sessionWrite("quantity", { productId, delta }, (model, id, key) =>
+      adjustQuantity(model, id, productId, delta, key),
+    );
+  const coupon = (code: string) =>
+    sessionWrite("coupon", { code }, (model, id, key) => applyCoupon(model, id, code, key));
+  const weigh = (grams: number) =>
+    sessionWrite("weigh", { grams }, (model, id, key) => checkWeight(model, id, grams, key));
+  const checkout = () => sessionWrite("checkout", {}, (model, id, key) => prepareCheckout(model, id, key));
+  const extend = () => sessionWrite("extend", {}, (model, id, key) => extendSession(model, id, key));
+  const tender = (method: TenderMethod, outcome: SimulationOutcome) =>
+    sessionWrite("tender", { method, outcome }, async (model, id, key) => {
+      const result = await simulateTender(model, id, method, outcome, key);
+      return result.session;
     });
-  }
-
-  async function quantity(productId: string, delta: number) {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const nextSession = await adjustQuantity(model, session.id, productId, delta, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
-    });
-  }
-
-  async function coupon(code: string) {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const nextSession = await applyCoupon(model, session.id, code, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
-    });
-  }
-
-  async function weigh(simulatedWeightGrams: number) {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const nextSession = await checkWeight(model, session.id, simulatedWeightGrams, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
-    });
-  }
-
-  async function intervene(action: "approve_weight" | "remove_item") {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const nextSession = await resolveIntervention(model, session.id, action, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
-    });
-  }
-
-  async function checkout() {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const nextSession = await prepareCheckout(model, session.id, crypto.randomUUID());
-      setState((current) => ({ ...current, session: nextSession }));
-    });
-  }
-
-  async function tender(method: TenderMethod, outcome: SimulationOutcome) {
-    const { model, session } = state;
-    if (!model || !session) return;
-    await perform(async () => {
-      const result = await simulateTender(model, session.id, method, outcome, crypto.randomUUID());
-      setState((current) => ({ ...current, session: result.session }));
-    });
-  }
 
   async function issueReceiptAction() {
     const { model, session } = state;
     if (!model || !session) return;
-    await perform(async () => {
-      const nextReceipt = await issueReceipt(model, session.id, crypto.randomUUID());
-      const nextSession = await getSession(model, session.id);
-      setState((current) => ({ ...current, session: nextSession, receipt: nextReceipt }));
+    await perform({ kind: "receipt", payload: { sessionId: session.id } }, async (key) => {
+      const nextReceipt = await issueReceipt(model, session.id, key);
+      const update = withDeadline(await getSession(model, session.id));
+      setState((current) => ({ ...current, ...update, receipt: nextReceipt }));
     });
   }
 
   async function reset() {
     const { model, session } = state;
     if (!model || !session) return;
-    await perform(async () => {
-      await resetSession(model, session.id, crypto.randomUUID());
-      setState((current) => ({ ...current, session: null, receipt: null }));
+    await perform({ kind: "reset", payload: { sessionId: session.id } }, async (key) => {
+      await resetSession(model, session.id, key);
+      endSession(null);
     });
   }
+
+  // Idle expiry clears the visible session locally; the server keeps the audited outcome.
+  const expire = useCallback(() => {
+    clearCredentials();
+    keys.clear();
+    setState((current) => ({
+      ...current,
+      session: null,
+      receipt: null,
+      deadline: null,
+      awaiting: null,
+      welcomeFocus: true,
+      error: current.model ? copy(current.model, "sessionTimedOut") : null,
+    }));
+  }, [keys]);
+
+  // While an attendant is needed, check for their decision every 3 s while the kiosk is visible.
+  // A failed poll keeps the last confirmed basket; a vanished or expired session returns to the welcome screen.
+  const pollModel = state.model;
+  const pollSessionId = state.session?.state === "attention_required" ? state.session.id : null;
+  useEffect(() => {
+    if (!pollModel || !pollSessionId) return undefined;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      getSession(pollModel, pollSessionId).then(
+        (next) => {
+          const update = withDeadline(next);
+          setState((current) => (current.session?.id === pollSessionId ? { ...current, ...update } : current));
+        },
+        (error: unknown) => {
+          if (!(error instanceof ApiError) || !sessionGoneCodes.has(error.code)) return;
+          clearCredentials();
+          keys.clear();
+          setState((current) => ({ ...current, session: null, receipt: null, deadline: null, error: error.message }));
+        },
+      );
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [pollModel, pollSessionId, keys]);
+
+  const { deadline, ...view } = state;
+  const idle = useIdleSession({
+    deadline,
+    warningSeconds: state.model?.data.app.sessionWarningSeconds ?? 0,
+    onExpire: expire,
+  });
 
   async function retry() {
     const { model, session } = state;
@@ -200,9 +277,9 @@ export function useCheckout() {
       setState((current) => ({ ...current, error: null }));
       return;
     }
-    await perform(async () => {
-      const nextSession = await getSession(model, session.id);
-      setState((current) => ({ ...current, session: nextSession }));
+    await perform(null, async () => {
+      const update = withDeadline(await getSession(model, session.id));
+      setState((current) => ({ ...current, ...update }));
     });
   }
 
@@ -218,13 +295,14 @@ export function useCheckout() {
   }
 
   return {
-    ...state,
+    ...view,
+    idle,
+    extend,
     start,
     scan,
     quantity,
     coupon,
     weigh,
-    intervene,
     checkout,
     tender,
     issueReceipt: issueReceiptAction,

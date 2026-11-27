@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { resolveApiBaseUrl } from "../config";
+import { kioskId, resolveApiBaseUrl } from "../config";
+import { getSessionToken, getStaffToken, setSessionToken } from "./credentials";
 import { copy } from "./format";
 import {
   catalogSchema,
@@ -7,6 +8,7 @@ import {
   publicModelSchema,
   receiptSchema,
   resetResultSchema,
+  startedSessionSchema,
   tenderResultSchema,
 } from "./schemas";
 import type {
@@ -34,11 +36,14 @@ export class ApiError extends Error {
   }
 }
 
-type RequestOptions = {
+type RequestAuth = "session" | "staff";
+
+export type RequestOptions = {
   method?: "GET" | "POST";
   body?: unknown;
   signal?: AbortSignal;
   idempotencyKey?: string;
+  auth?: RequestAuth;
 };
 
 const errorCopyByCode: Readonly<Record<string, string>> = {
@@ -48,7 +53,30 @@ const errorCopyByCode: Readonly<Record<string, string>> = {
   WEIGHT_CHECK_REQUIRED: "weightMismatch",
   SESSION_NOT_FOUND: "sessionExpired",
   RECEIPT_NOT_FOUND: "sessionExpired",
+  SESSION_EXPIRED: "sessionTimedOut",
+  KIOSK_NOT_REGISTERED: "kioskNotRecognised",
+  IDEMPOTENCY_KEY_REUSED: "idempotencyConflict",
+  STAFF_AUTH_FAILED: "staffSignInFailed",
+  STAFF_THROTTLED: "staffThrottled",
+  STAFF_REQUIRED: "staffSignInRequired",
+  SESSION_VERSION_CONFLICT: "staffConflict",
+  INTERVENTION_LINE_MISMATCH: "staffConflict",
 };
+
+// Staff requests never carry the kiosk ID or the shopper token, and shopper requests never carry a staff token.
+function credentialHeaders(auth: RequestAuth): Record<string, string> {
+  if (auth === "staff") {
+    const staffToken = getStaffToken();
+    return staffToken ? { Authorization: `Bearer ${staffToken}` } : {};
+  }
+  const token = getSessionToken();
+  return { "X-Kiosk-Id": kioskId, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
+
+// A failure whose outcome is unknown: the write may have committed, so keep its intent key and retry it.
+export function isRetryableFailure(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 0 || error.status >= 500 || error.code === "INVALID_RESPONSE");
+}
 
 function getErrorCopy(model: PublicModel, code: string): string {
   return copy(model, errorCopyByCode[code] ?? "errorGeneric");
@@ -61,6 +89,8 @@ async function sendRequest(model: PublicModel, path: string, options: RequestOpt
       method: options.method ?? "GET",
       signal: options.signal,
       headers: {
+        "X-Request-ID": crypto.randomUUID(),
+        ...credentialHeaders(options.auth ?? "session"),
         ...(options.body ? { "Content-Type": "application/json" } : {}),
         ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
       },
@@ -72,7 +102,7 @@ async function sendRequest(model: PublicModel, path: string, options: RequestOpt
   }
 }
 
-async function requestData<T>(
+export async function requestData<T>(
   model: PublicModel,
   path: string,
   schema: z.ZodType<T>,
@@ -123,8 +153,19 @@ export function getCatalog(model: PublicModel, signal?: AbortSignal): Promise<Ca
   return requestData(model, "/catalog", catalogSchema, { signal });
 }
 
-export function startSession(model: PublicModel, idempotencyKey: string): Promise<CheckoutSession> {
-  return requestData(model, "/sessions", checkoutSessionSchema, {
+// The access token is kept in module memory and stripped from the returned session.
+export async function startSession(model: PublicModel, idempotencyKey: string): Promise<CheckoutSession> {
+  const { accessToken, ...session } = await requestData(model, "/sessions", startedSessionSchema, {
+    method: "POST",
+    body: {},
+    idempotencyKey,
+  });
+  setSessionToken(accessToken);
+  return session;
+}
+
+export function extendSession(model: PublicModel, sessionId: string, idempotencyKey: string) {
+  return requestData(model, `/sessions/${sessionId}/extend`, checkoutSessionSchema, {
     method: "POST",
     body: {},
     idempotencyKey,
@@ -188,19 +229,6 @@ export function checkWeight(
   return requestData(model, `/sessions/${sessionId}/weight-check`, checkoutSessionSchema, {
     method: "POST",
     body: { simulatedWeightGrams },
-    idempotencyKey,
-  });
-}
-
-export function resolveIntervention(
-  model: PublicModel,
-  sessionId: string,
-  action: "approve_weight" | "remove_item",
-  idempotencyKey: string,
-) {
-  return requestData(model, `/sessions/${sessionId}/intervention`, checkoutSessionSchema, {
-    method: "POST",
-    body: { action },
     idempotencyKey,
   });
 }

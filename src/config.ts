@@ -8,6 +8,14 @@ if (modeOverride !== undefined && modeOverride !== "true" && modeOverride !== "f
 
 export const isMock = modeOverride === undefined ? defaultIsMock : modeOverride === "true";
 
+// The kiosk identity is a public label set at build time; the session token, not this value, proves ownership.
+const kioskIdOverride: string | undefined = import.meta.env.VITE_SCANGO_KIOSK_ID;
+if (kioskIdOverride !== undefined && !/^[a-z0-9-]{1,40}$/.test(kioskIdOverride)) {
+  throw new Error("VITE_SCANGO_KIOSK_ID must be a lowercase kiosk identifier such as kiosk-01.");
+}
+
+export const kioskId = kioskIdOverride ?? "kiosk-01";
+
 export function resolveApiBaseUrl(devMockApiBaseUrl?: string): string {
   const localMockApiBaseUrl = import.meta.env.DEV ? devMockApiBaseUrl?.trim() || defaultLocalMockApiBaseUrl : undefined;
   const selectedBaseUrl = isMock
