@@ -40,6 +40,7 @@ interface CheckoutState {
   busy: boolean;
   deadline: number | null;
   awaiting: AwaitingIntent | null;
+  welcomeFocus: boolean;
 }
 
 export interface AwaitingIntent {
@@ -62,6 +63,7 @@ const initialState: CheckoutState = {
   busy: false,
   deadline: null,
   awaiting: null,
+  welcomeFocus: false,
 };
 
 const terminalStates = new Set(["reset", "expired"]);
@@ -114,7 +116,15 @@ export function useCheckout() {
   function endSession(error: string | null) {
     clearCredentials();
     keys.clear();
-    setState((current) => ({ ...current, session: null, receipt: null, deadline: null, awaiting: null, error }));
+    setState((current) => ({
+      ...current,
+      session: null,
+      receipt: null,
+      deadline: null,
+      awaiting: null,
+      welcomeFocus: true,
+      error,
+    }));
   }
 
   function reportFailure(error: unknown) {
@@ -173,7 +183,7 @@ export function useCheckout() {
     if (!model) return;
     await perform({ kind: "start", payload: {} }, async (key) => {
       const update = withDeadline(await startSession(model, key));
-      setState((current) => ({ ...current, ...update, receipt: null }));
+      setState((current) => ({ ...current, ...update, receipt: null, welcomeFocus: false }));
     });
   }
 
@@ -224,6 +234,7 @@ export function useCheckout() {
       receipt: null,
       deadline: null,
       awaiting: null,
+      welcomeFocus: true,
       error: current.model ? copy(current.model, "sessionTimedOut") : null,
     }));
   }, [keys]);

@@ -274,13 +274,17 @@ describe("checkout hook", () => {
     expect(getSessionToken()).toBeNull();
   });
 
-  it("reset forgets the shopper token", async () => {
+  it("reset forgets the shopper token and asks the welcome screen to take focus", async () => {
     const { result } = await loadHook();
+    expect(result.current.welcomeFocus).toBe(false);
     await act(async () => result.current.start());
     setSessionToken("shopper-token");
 
     await act(async () => result.current.reset());
     expect(getSessionToken()).toBeNull();
+    expect(result.current.welcomeFocus).toBe(true);
+    await act(async () => result.current.start());
+    expect(result.current.welcomeFocus).toBe(false);
   });
 
   it("checks for an attendant decision every three seconds while attention is required and visible", async () => {

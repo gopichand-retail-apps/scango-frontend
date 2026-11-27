@@ -1,0 +1,67 @@
+/*
+ * Receipt-only print (SCN-04). Applies only while the receipt screen is shown (data-screen="receipt"):
+ * every sibling of the receipt (header, alerts, panels, dialogs) and the receipt's own actions are hidden,
+ * and both themes print black on white. Other screens print unchanged.
+ */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  body {
+    margin: 0;
+    background: #fff;
+  }
+
+  .scango-shell[data-screen="receipt"],
+  .scango-shell[data-screen="receipt"][data-theme="dark"] {
+    --page: #fff;
+    --surface: #fff;
+    --surface-soft: #fff;
+    --ink: #000;
+    --muted: #222;
+    --line: #999;
+    --line-strong: #666;
+    --forest: #000;
+    --positive: #000;
+    --negative: #000;
+    --coral: #000;
+    --gold: #000;
+    min-height: 0;
+    color: #000;
+    background: #fff;
+  }
+
+  .scango-shell[data-screen="receipt"] > :not(.receipt-screen),
+  .scango-shell[data-screen="receipt"] .receipt-actions,
+  .scango-shell[data-screen="receipt"] .receipt-mark {
+    display: none !important;
+  }
+
+  .scango-shell[data-screen="receipt"] .receipt-screen {
+    width: 100%;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+  }
+
+  .scango-shell[data-screen="receipt"] .receipt-card {
+    max-width: none;
+    padding: 0;
+    color: #000;
+    background: #fff;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .scango-shell[data-screen="receipt"] .receipt-meta,
+  .scango-shell[data-screen="receipt"] .receipt-line,
+  .scango-shell[data-screen="receipt"] .receipt-totals > div {
+    break-inside: avoid;
+  }
+
+  .scango-shell[data-screen="receipt"] .receipt-line > span {
+    overflow-wrap: anywhere;
+  }
+}

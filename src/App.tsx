@@ -3,6 +3,7 @@ import "./App.css";
 import "./styles/kiosk-layout.css";
 import "./styles/kiosk-controls.css";
 import "./styles/session-dialog.css";
+import "./styles/receipt-print.css";
 import { KioskHeader } from "./components/KioskHeader";
 import { AwaitingConfirmation } from "./components/AwaitingConfirmation";
 import { IdleWarning } from "./components/IdleWarning";
@@ -11,6 +12,7 @@ import { ReceiptPanel } from "./components/ReceiptPanel";
 import { WelcomeScreen } from "./components/WelcomeScreen";
 import { isMock } from "./config";
 import { copy } from "./lib/format";
+import type { PublicModel } from "./lib/types";
 import { useCheckout } from "./lib/useCheckout";
 
 function BootState({ error, onRetry }: { error: string | null; onRetry: () => void }) {
@@ -31,6 +33,40 @@ function BootState({ error, onRetry }: { error: string | null; onRetry: () => vo
   );
 }
 
+type Kiosk = ReturnType<typeof useCheckout>;
+
+// Everything layered over the current screen: unconfirmed step, idle warning and the dismissible alert.
+function SessionOverlays({ model, kiosk }: { model: PublicModel; kiosk: Kiosk }) {
+  return (
+    <>
+      {kiosk.awaiting ? <AwaitingConfirmation model={model} busy={kiosk.busy} onRetry={kiosk.awaiting.retry} /> : null}
+      {kiosk.idle.phase === "warning" ? (
+        <IdleWarning
+          model={model}
+          secondsLeft={kiosk.idle.secondsLeft}
+          busy={kiosk.busy}
+          onExtend={kiosk.extend}
+          onEnd={kiosk.reset}
+        />
+      ) : null}
+      {kiosk.error ? (
+        <div className="kiosk-alert" role="alert">
+          <AlertCircle size={17} aria-hidden="true" />
+          <p>{kiosk.error}</p>
+          <button
+            className="icon-button"
+            type="button"
+            aria-label={copy(model, "retry")}
+            onClick={() => void kiosk.retry()}
+          >
+            <X size={17} aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export default function App() {
   const kiosk = useCheckout();
   const model = kiosk.model;
@@ -42,6 +78,8 @@ export default function App() {
   const theme = kiosk.theme ?? model.data.app.defaultTheme;
   // While a step is unconfirmed, every other write waits behind the awaiting-confirmation retry.
   const locked = kiosk.busy || kiosk.awaiting !== null;
+  // Print rules key off this attribute so only the receipt screen prints receipt-only.
+  const receiptShown = kiosk.session?.state === "receipt_issued" && kiosk.receipt !== null;
   const content = !kiosk.catalog ? (
     <main className="service-error" role="alert">
       <AlertCircle size={22} aria-hidden="true" />
@@ -51,7 +89,13 @@ export default function App() {
       </button>
     </main>
   ) : !kiosk.session ? (
-    <WelcomeScreen model={model} products={kiosk.catalog.products} busy={locked} onStart={() => void kiosk.start()} />
+    <WelcomeScreen
+      model={model}
+      products={kiosk.catalog.products}
+      busy={locked}
+      focusStart={kiosk.welcomeFocus}
+      onStart={() => void kiosk.start()}
+    />
   ) : kiosk.session.state === "receipt_issued" && kiosk.receipt ? (
     <ReceiptPanel
       model={model}
@@ -77,7 +121,12 @@ export default function App() {
   );
 
   return (
-    <div className="scango-shell" data-theme={theme} data-mode={isMock ? "mock" : "live"}>
+    <div
+      className="scango-shell"
+      data-theme={theme}
+      data-mode={isMock ? "mock" : "live"}
+      data-screen={receiptShown ? "receipt" : undefined}
+    >
       <KioskHeader
         model={model}
         connected={kiosk.catalog !== null}
@@ -85,30 +134,7 @@ export default function App() {
         onToggleTheme={() => kiosk.setTheme(theme === "light" ? "dark" : "light")}
       />
       {content}
-      {kiosk.awaiting ? <AwaitingConfirmation model={model} busy={kiosk.busy} onRetry={kiosk.awaiting.retry} /> : null}
-      {kiosk.idle.phase === "warning" ? (
-        <IdleWarning
-          model={model}
-          secondsLeft={kiosk.idle.secondsLeft}
-          busy={kiosk.busy}
-          onExtend={kiosk.extend}
-          onEnd={kiosk.reset}
-        />
-      ) : null}
-      {kiosk.error ? (
-        <div className="kiosk-alert" role="alert">
-          <AlertCircle size={17} aria-hidden="true" />
-          <p>{kiosk.error}</p>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label={copy(model, "retry")}
-            onClick={() => void kiosk.retry()}
-          >
-            <X size={17} aria-hidden="true" />
-          </button>
-        </div>
-      ) : null}
+      <SessionOverlays model={model} kiosk={kiosk} />
     </div>
   );
 }

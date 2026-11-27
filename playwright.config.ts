@@ -48,6 +48,9 @@ export default defineConfig({
         PORT: String(backendPort),
         SCANGO_DB_PATH: ":memory:",
         SCANGO_E2E_FRONTEND_ORIGIN: frontendUrl,
+        // One isolated in-memory API serves the whole suite from one loopback address; the 160/min default
+        // stays in force everywhere else and is covered by the backend's own rate-limit test.
+        SCANGO_RATE_LIMIT_PER_MINUTE: "5000",
       },
     },
     {

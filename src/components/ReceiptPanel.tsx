@@ -68,7 +68,8 @@ export function ReceiptPanel({
         </dl>
         <p className="receipt-tender">
           {copy(model, "tenderMethod")}:{" "}
-          {copy(model, receipt.tenderMethod === "cash" ? "cashSimulation" : "cardSimulation")}
+          {copy(model, receipt.tenderMethod === "cash" ? "cashSimulation" : "cardSimulation")} ·{" "}
+          {copy(model, "statePaid")}
         </p>
         <div className="receipt-actions">
           <button className="button button-secondary" type="button" onClick={onPrint}>

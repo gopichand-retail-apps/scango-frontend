@@ -31,6 +31,7 @@ function createKiosk(overrides: Partial<CheckoutView> = {}): CheckoutView {
     extend: vi.fn().mockResolvedValue(undefined),
     idle: { phase: "inactive", secondsLeft: null },
     awaiting: null,
+    welcomeFocus: false,
     retry: vi.fn().mockResolvedValue(undefined),
     setTheme: vi.fn(),
     dismissError: vi.fn(),

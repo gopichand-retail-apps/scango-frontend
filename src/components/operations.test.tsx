@@ -32,6 +32,16 @@ describe("welcome and catalog screens", () => {
     expect(screen.getByRole("button", { name: /Start checkout/ })).toBeEnabled();
   });
 
+  it("moves focus to Start checkout only when returning from a finished checkout", () => {
+    const { rerender } = render(
+      <WelcomeScreen model={model} products={catalog.products} busy={false} onStart={vi.fn()} />,
+    );
+    expect(screen.getByRole("button", { name: /Start checkout/ })).not.toHaveFocus();
+
+    rerender(<WelcomeScreen model={model} products={catalog.products} busy={false} focusStart onStart={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /Start checkout/ })).toHaveFocus();
+  });
+
   it("scans by barcode, filters products, and reports empty search results", async () => {
     const user = userEvent.setup();
     const onScan = vi.fn().mockResolvedValue(undefined);
@@ -226,6 +236,18 @@ describe("payment, receipt, and workspace screens", () => {
     const cashReceipt = { ...receipt, tenderMethod: "cash" } as const;
     rerender(<ReceiptPanel model={model} receipt={cashReceipt} busy={false} onPrint={onPrint} onReset={onReset} />);
     expect(screen.getByText(/Cash simulation/)).toBeVisible();
+  });
+
+  it("states the tender status on the receipt and keeps it readable after a print attempt", async () => {
+    const user = userEvent.setup();
+    const onPrint = vi.fn();
+    render(<ReceiptPanel model={model} receipt={receipt} busy={false} onPrint={onPrint} onReset={noop} />);
+
+    expect(screen.getByText(new RegExp(copy(model, "statePaid")))).toBeVisible();
+    const print = screen.getByRole("button", { name: copy(model, "printReceipt") });
+    await user.click(print);
+    expect(print).toHaveFocus();
+    expect(screen.getByText(receipt.receiptNumber)).toBeVisible();
   });
 
   it("disables receipt actions while the checkout is busy", () => {
